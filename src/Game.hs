@@ -13,6 +13,7 @@ module Game (
     Game,
     draw,
     drawN,
+    bank,
     roll,
     context
 ) where
@@ -83,6 +84,10 @@ data Game p h a where
     -- | The given player draws from their deck.
     Draw :: Player h -> Game p h ()
 
+    -- | The given player gains the given number of coins (or loses, when
+    -- negative).
+    Bank :: Player h -> Integer -> Game p h ()
+
     -- | Performs a public random roll for a natural number less than the
     -- given number.
     Roll :: Integer -> Game p h Integer
@@ -115,10 +120,10 @@ class Primitive p where
 
     -- | Runs a primitive as a game action using the given game actions as
     -- arguments.
-    runPrimitive :: p -> [Game p h Value] -> Game p h Value
+    runPrimitive :: (Typeable h) => p -> [Game p h Value] -> Game p h Value
 
 -- | Gets the slot types and result type for a term.
-termType :: (Primitive p) => Term p h -> ([Type], Type)
+termType :: (Primitive p, Typeable h) => Term p h -> ([Type], Type)
 termType (Slot _ t) = ([t], t)
 termType (App _ p args) = (slotTypes, resultType) where
     (_, resultType) = primitiveType p
@@ -133,6 +138,10 @@ drawN :: Player h -> Integer -> Game p h ()
 drawN _ 0 = return ()
 drawN p 1 = draw p
 drawN p n = draw p >>= (\_ -> drawN p (n - 1))
+
+-- | The given player gains (or loses) the given number of coins.
+bank :: Player h -> Integer -> Game p h ()
+bank = Bank
 
 -- | Performs a public random roll for a natural number less than the given
 -- number.
