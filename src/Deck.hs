@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
-module Card (
+module Deck (
     deck
 ) where
 
