@@ -17,15 +17,15 @@ getCardTerm :: Card -> Term Prim ()
 getCardTerm (Card term) = term
 
 -- Shorthand functions for this next part
-act = Slot () TAction
-con = Slot () TCondition
-ply = Slot () TPlayer
-num = Slot () TNumber
-app = App ()
+act = Slot TAction
+con = Slot TCondition
+ply = Slot TPlayer
+num = Slot TNumber
+app = App
 app0 p = app p []
-app1 p x = app p [x]
-app2 p x y = app p [x, y]
-app3 p x y z = app p [x, y, z]
+app1 p x = app p [((), x)]
+app2 p x y = app p [((), x), ((), y)]
+app3 p x y z = app p [((), x), ((), y), ((), z)]
 
 -- | Lists all cards in a standard deck, paired with multiplicity.
 deck :: [(Card, Integer)]
