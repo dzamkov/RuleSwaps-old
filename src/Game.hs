@@ -10,6 +10,7 @@ module Game (
     getValue,
     Primitive (..),
     Term (..),
+    Card,
     termType,
     PlayerState (..),
     GameState (..),
@@ -93,6 +94,9 @@ data Term p h where
     -- its slots.
     App :: p -> [(h, Term p h)] -> Term p h
     deriving (Eq, Ord, Show)
+
+-- | Describes a possible card.
+type Card p = Term p ()
 
 -- | Contains all publicly-available information about a player in a game.
 data PlayerState h = PlayerState {
