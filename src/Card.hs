@@ -18,7 +18,7 @@ app2 p x y = app p [((), x), ((), y)]
 app3 p x y z = app p [((), x), ((), y), ((), z)]
 
 -- | Lists all cards in a standard deck, paired with multiplicity.
-deck :: [(Card Prim, Integer)]
+deck :: Deck Prim
 deck = [
 
     -- Drawing cards

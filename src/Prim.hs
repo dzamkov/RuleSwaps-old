@@ -28,7 +28,7 @@ playerInfo p = do
     pId <- playerId p
     s <- state
     return (pId, getPlayer pId s)
-numberValue :: Game p h Value -> Game p h Integer
+numberValue :: Game p Value -> Game p Integer
 numberValue = fmap getValue
 instance Primitive Prim where
     primitiveType PPlyDrawN = ([TPlayer, TNumber], TAction)

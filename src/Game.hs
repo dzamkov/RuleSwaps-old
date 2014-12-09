@@ -11,6 +11,7 @@ module Game (
     Primitive (..),
     Term (..),
     Card,
+    Deck,
     termType,
     PlayerState (..),
     GameState (..),
@@ -39,9 +40,11 @@ import Control.Applicative
 import Data.Maybe (fromMaybe)
 import qualified Data.List as List
 
--- | Identifies a player in a game where game objects are identified by
--- a type @h@.
-newtype Player h = Player h deriving (Eq, Show, Typeable)
+-- | Identifies a game object.
+type Object = Int
+
+-- | Identifies a player in a game.
+newtype Player = Player Object deriving (Eq, Show, Typeable)
 
 -- | Identifies a type/category of value within the game.
 data Type
@@ -61,7 +64,7 @@ instance IsGameType () where
     gameTypeOf _ = TAction
 instance IsGameType Bool where
     gameTypeOf _ = TCondition
-instance Typeable h => IsGameType (Player h) where
+instance IsGameType Player where
     gameTypeOf _ = TPlayer
 instance IsGameType Integer where
     gameTypeOf _ = TNumber
@@ -84,7 +87,8 @@ getValue :: (IsGameType a) => Value -> a
 getValue (Value x) = fromMaybe (error "Invalid value conversion") (cast x)
 
 -- | Describes a composition of primitive operations of type @p@ that may
--- result in a value.
+-- result in a value. Values of type @h@ are used to sub-expressions in the
+-- term.
 data Term p h where
 
     -- | An unfilled slot in the term.
@@ -98,8 +102,11 @@ data Term p h where
 -- | Describes a possible card.
 type Card p = Term p ()
 
+-- | Describes a possible deck.
+type Deck p = [(Card p, Integer)]
+
 -- | Contains all publicly-available information about a player in a game.
-data PlayerState h = PlayerState {
+data PlayerState = PlayerState {
 
     -- | The name of the player.
     name :: String,
@@ -108,113 +115,114 @@ data PlayerState h = PlayerState {
     coins :: Integer,
 
     -- | The set of cards the player is holding.
-    cards :: [h] }
+    cards :: [Object] }
 
 -- | Contains all publicly-available information about a game at a particular
 -- moment between actions.
-data GameState p h = GameState {
+data GameState p = GameState {
 
     -- | The set of players in the game in turn order. The current player
     -- is first, the next player is next, and so on.
-    players :: [(Player h, PlayerState h)],
+    players :: [(Player, PlayerState)],
 
     -- | The current game constitution.
-    constitution :: [(h, Term p h)],
+    constitution :: [(Object, Term p Object)],
 
     -- | The next term in the consitution to be executed.
-    place :: h }
+    place :: Object,
+
+    -- | The identifier to be assigned to the next created object.
+    nextObj :: Object }
 
 -- | Gets the state of a player in a 'GameState', assuming the player is in
 -- the game.
-getPlayer :: (Eq h) => Player h -> GameState p h -> PlayerState h
+getPlayer :: Player -> GameState p -> PlayerState
 getPlayer target state = snd $ fromMaybe (error "Player does not exist") $
     List.find ((== target) . fst) $ players state
 
 -- | Identifies a decision that an individual player can make, resulting in
 -- a value of type @a@.
-data PlayerChoice p h a where
+data PlayerChoice p a where
 
     -- | The player makes a yes or no decision.
-    YesNo :: PlayerChoice p h Bool
+    YesNo :: PlayerChoice p Bool
 
     -- | The player choses a number up to their current coin count. These
     -- parameter is a hint for the player which tells whether the coins will
     -- be unconditionally lost (as in a payment).
-    Coin :: Bool -> PlayerChoice p h Integer
+    Coin :: Bool -> PlayerChoice p Integer
 
     -- | A composite player choice made up from responses of two choices.
-    Multi :: PlayerChoice p h a -> PlayerChoice p h b
-        -> PlayerChoice p h (a, b)
+    Multi :: PlayerChoice p a -> PlayerChoice p b -> PlayerChoice p (a, b)
 
 -- | Identifies a primitive action in a game that modifies or uses non-public
 -- information. These require coordination between players somehow.
-data GameInteract p h a where
+data GameInteract p a where
 
     -- | The given player draws from their deck. Returns the identifier for
     -- the drawn card.
-    Draw :: Player h -> GameInteract p h h
+    Draw :: Player -> GameInteract p Object
 
     -- | The given player has to make a choice.
-    Choice :: Player h -> PlayerChoice p h a -> GameInteract p h a
+    Choice :: Player -> PlayerChoice p a -> GameInteract p a
 
     -- | All players have to make a choice.
-    ChoiceAll :: PlayerChoice p h a -> GameInteract p h [(Player h, a)]
+    ChoiceAll :: PlayerChoice p a -> GameInteract p [(Player, a)]
 
     -- | Performs a public random roll for a natural number less than the given
     -- number.
-    Roll :: Integer -> GameInteract p h Integer
+    Roll :: Integer -> GameInteract p Integer
 
     -- | The game is paused until a human decides to continue it, giving the
     -- human's a chance to see what is happening.
-    Pause :: GameInteract p h ()
+    Pause :: GameInteract p ()
 
 -- | Identifies a simple action in a game that modifies only public
 -- information.
-data GameEffect p h a where
+data GameEffect p a where
 
     -- | The given player gains the given number of coins (or loses, when
     -- negative). If this is negative, it may not be more coins than the plaer
     -- has.
-    Bank :: Player h -> Integer -> GameEffect p h ()
+    Bank :: Player -> Integer -> GameEffect p ()
 
 -- | Identifies a primitive action in a game.
-data GameAction p h a where
+data GameAction p a where
 
     -- | An action that requires coordination between players.
-    Interact :: GameInteract p h a -> GameAction p h a
+    Interact :: GameInteract p a -> GameAction p a
 
     -- | An action that can be described as a modification of publicly-
     -- available information.
-    Effect :: GameEffect p h a -> GameAction p h a
+    Effect :: GameEffect p a -> GameAction p a
 
     -- | Gets the current game state.
-    Read :: GameAction p h (GameState p h)
+    Read :: GameAction p (GameState p)
 
     -- | Displays a message to the players.
-    Message :: String -> GameAction p h ()
+    Message :: String -> GameAction p ()
 
     -- | Performs the given action within the context of a rule, slot or card.
     -- This is purely for user feedback.
-    Context :: h -> Game p h a -> GameAction p h a
+    Context :: Object -> Game p a -> GameAction p a
 
 -- | Describes a complex procedure/action in game logic that produces a result
--- of type @a@, assuming that @p@ encodes primitive operations and game objects
--- are identified by type @h@.
-data Game p h a where
+-- of type @a@, assuming that @p@ encodes primitive operations.
+data Game p a where
 
     -- | Returns a value without doing anything.
-    Return :: a -> Game p h a
+    Return :: a -> Game p a
 
     -- | Requests a 'GameAction' to be performed, and then provides a
     -- contiunation of the game based on the resulting value.
-    Cont :: GameAction p h b -> (b -> Game p h a) -> Game p h a
+    Cont :: GameAction p b -> (b -> Game p a) -> Game p a
 
-instance Functor (Game p h) where
+instance Functor (Game p) where
     fmap = liftM
-instance Applicative (Game p h) where
+instance Applicative (Game p) where
     pure = Return
     (<*>) = ap
-instance Monad (Game p h) where
+instance Monad (Game p) where
     (>>=) (Return x) f = f x
     (>>=) (Cont act cont) f = Cont act (cont >=> f)
     return = Return
@@ -226,60 +234,59 @@ class Primitive p where
     primitiveType :: p -> ([Type], Type)
 
     -- | Runs a primitive as a game using the given game as arguments.
-    runPrimitive :: (Eq h, Typeable h) => p
-        -> [Game p h Value] -> Game p h Value
+    runPrimitive :: p -> [Game p Value] -> Game p Value
 
 -- | Gets the slot types and result type for a term.
-termType :: (Primitive p, Typeable h) => Term p h -> ([Type], Type)
+termType :: (Primitive p) => Term p h -> ([Type], Type)
 termType (Slot t) = ([t], t)
 termType (App p args) = (slotTypes, resultType) where
     (_, resultType) = primitiveType p
     slotTypes = List.concatMap (\(_, a) -> fst $ termType a) args
 
 -- | Constructs a game from a 'GameInteract'.
-interaction :: GameInteract p h a -> Game p h a
+interaction :: GameInteract p a -> Game p a
 interaction i = Cont (Interact i) Return
 
 -- | constructs a game from a 'GameEffect'.
-effect :: GameEffect p h a -> Game p h a
+effect :: GameEffect p a -> Game p a
 effect e = Cont (Effect e) Return
 
 -- | Gets the current game state.
-state :: Game p h (GameState p h)
+state :: Game p (GameState p)
 state = Cont Read Return
 
 -- | The given player draws a card. Returns the identifier for the drawn card.
-draw :: Player h -> Game p h h
+draw :: Player -> Game p Object
 draw p = interaction (Draw p)
 
 -- | The given player draws the given number of cards.
-drawN :: Player h -> Integer -> Game p h ()
+drawN :: Player -> Integer -> Game p ()
 drawN _ 0 = return ()
 drawN p 1 = void (draw p)
 drawN p n = draw p >>= (\_ -> drawN p (n - 1))
 
 -- | The given player gains the given number of coins.
-gainCoins :: Player h -> Integer -> Game p h ()
+gainCoins :: Player -> Integer -> Game p ()
 gainCoins p n = effect (Bank p n)
 
 -- | The given player loses the given number of coins.
-loseCoins :: Player h -> Integer -> Game p h ()
+loseCoins :: Player -> Integer -> Game p ()
 loseCoins p n = effect (Bank p (-n))
 
 -- | Performs a public random roll for a natural number less than the given
 -- number.
-roll :: Integer -> Game p h Integer
+roll :: Integer -> Game p Integer
 roll n = interaction (Roll n)
 
 -- | Pauses the game for a human player to continue it.
-pause :: Game p h ()
+pause :: Game p ()
 pause = interaction Pause
 
 -- | Displays a message to the players.
-message :: String -> Game p h ()
+message :: String -> Game p ()
 message m = Cont (Message m) Return
 
 -- | Gives context to a game action by associating it with a slow, rule,
 -- or card. This is purely for user feedback.
-context :: h -> Game p h a -> Game p h a
+context :: Object -> Game p a -> Game p a
 context id inner = Cont (Context id inner) Return
