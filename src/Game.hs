@@ -10,7 +10,12 @@ module Game (
     Primitive (..),
     Term (..),
     termType,
+    PlayerState (..),
+    GameState (..),
+    GameAction (..),
     Game,
+    action,
+    state,
     draw,
     drawN,
     bank,
@@ -69,40 +74,69 @@ getValue (Value x) = fromMaybe (error "Invalid value conversion") (cast x)
 data Term p h where
 
     -- | An unfilled slot in the term.
-    Slot :: h -> Type -> Term p h
+    Slot :: Type -> Term p h
 
     -- | Applies a primitive operation to a list of argument terms that fill
     -- its slots.
-    App :: h -> p -> [Term p h] -> Term p h
+    App :: p -> [(h, Term p h)] -> Term p h
     deriving (Eq, Ord, Show)
 
--- | Describes a procedure/action in game logic that produces a result of type
--- @a@, assuming that @p@ encodes primitive operations and game objects are
--- identified by type @h@.
-data Game p h a where
+-- | Contains all publicly-available information about a player in a game.
+data PlayerState h = PlayerState {
+
+    -- | The amount of coins the player has.
+    coins :: Integer,
+
+    -- | The set of cards the player is holding.
+    cards :: [h] }
+
+-- | Contains all publicly-available information about a game at a particular
+-- moment between actions.
+data GameState p h = GameState {
+
+    -- | The set of players in the game in turn order. The current player
+    -- is first, the next player is next, and so on.
+    players :: [(Player h, PlayerState h)],
+
+    -- | The current game constitution.
+    constitution :: [(h, Term p h)],
+
+    -- | The next term in the consitution to be executed.
+    place :: h }
+
+-- | Identifies a primitive action in a game procedure. See 'Game'.
+data GameAction p h a where
 
     -- | The given player draws from their deck. Returns the identifier for
     -- the drawn card.
-    Draw :: Player h -> Game p h h
+    Draw :: Player h -> GameAction p h h
 
     -- | The given player gains the given number of coins (or loses, when
     -- negative).
-    Bank :: Player h -> Integer -> Game p h ()
+    Bank :: Player h -> Integer -> GameAction p h ()
 
     -- | Performs a public random roll for a natural number less than the
     -- given number.
-    Roll :: Integer -> Game p h Integer
+    Roll :: Integer -> GameAction p h Integer
 
-    -- | Gives context to a game action by associating it with a slot, rule,
-    -- or card. This is purely for user feedback.
+-- | Describes a complex procedure/action in game logic that produces a result
+-- of type @a@, assuming that @p@ encodes primitive operations and game objects
+-- are identified by type @h@.
+data Game p h a where
+
+    -- | Gives context to a game by associating it with a slot, rule, or card.
+    -- This is purely for user feedback.
     Context :: h -> Game p h a -> Game p h a
 
-    -- | Performs a game action, then uses its result to select another game
-    -- action to perform.
-    Bind :: Game p h b -> (b -> Game p h a) -> Game p h a
-
-    -- | Returns the value @a@ without doing anything.
+    -- | Returns a value without doing anything.
     Return :: a -> Game p h a
+
+    -- | Gets the current game state, and performs a game according to it.
+    Read :: (GameState p h -> Game p h a) -> Game p h a
+
+    -- | Given the current 'GameState', returns the action to be performed
+    -- along with the continuation of the game, after the action is resolved.
+    Cont :: GameAction p h b -> (b -> Game p h a) -> Game p h a
 
 instance Functor (Game p h) where
     fmap = liftM
@@ -110,7 +144,10 @@ instance Applicative (Game p h) where
     pure = Return
     (<*>) = ap
 instance Monad (Game p h) where
-    (>>=) = Bind
+    (>>=) (Context h inner) f = Context h (inner >>= f)
+    (>>=) (Return x) f = f x
+    (>>=) (Read g) f = Read (g >=> f)
+    (>>=) (Cont act cont) f = Cont act (cont >=> f)
     return = Return
 
 -- | Type @p@ represents a primitive operation that results in a game value.
@@ -119,20 +156,27 @@ class Primitive p where
     -- | Gets the argument types and result type for a primitive.
     primitiveType :: p -> ([Type], Type)
 
-    -- | Runs a primitive as a game action using the given game actions as
-    -- arguments.
+    -- | Runs a primitive as a game using the given game as arguments.
     runPrimitive :: (Typeable h) => p -> [Game p h Value] -> Game p h Value
 
 -- | Gets the slot types and result type for a term.
 termType :: (Primitive p, Typeable h) => Term p h -> ([Type], Type)
-termType (Slot _ t) = ([t], t)
-termType (App _ p args) = (slotTypes, resultType) where
+termType (Slot t) = ([t], t)
+termType (App p args) = (slotTypes, resultType) where
     (_, resultType) = primitiveType p
-    slotTypes = List.concatMap (fst . termType) args
+    slotTypes = List.concatMap (\(_, a) -> fst $ termType a) args
+
+-- | constructs a game from a game action.
+action :: GameAction p h a -> Game p h a
+action act = Cont act Return
+
+-- | Gets the current game state.
+state :: Game p h (GameState p h)
+state = Read Return
 
 -- | The given player draws a card. Returns the identifier for the drawn card.
 draw :: Player h -> Game p h h
-draw = Draw
+draw p = action (Draw p)
 
 -- | The given player draws the given number of cards.
 drawN :: Player h -> Integer -> Game p h ()
@@ -142,12 +186,12 @@ drawN p n = draw p >>= (\_ -> drawN p (n - 1))
 
 -- | The given player gains (or loses) the given number of coins.
 bank :: Player h -> Integer -> Game p h ()
-bank = Bank
+bank p n = action (Bank p n)
 
 -- | Performs a public random roll for a natural number less than the given
 -- number.
 roll :: Integer -> Game p h Integer
-roll = Roll
+roll n = action (Roll n)
 
 -- | Gives context to a game action by associating it with a slow, rule,
 -- or card. This is purely for user feedback.
