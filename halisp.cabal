@@ -6,4 +6,7 @@ cabal-version:       >=1.8
 executable rule-swaps
   hs-source-dirs: src
   main-is:		  Main.hs
-  build-depends:  base ==4.6.*
+  build-depends:  base ==4.6.*,
+                  cryptohash,
+                  bytestring,
+                  entropy
