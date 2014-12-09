@@ -14,6 +14,9 @@ data Prim
     | PPlyLoseCoin
     | PThen
     | PIf
+    | PAlways
+    | PNever
+    | PConst Integer
     deriving (Eq, Ord, Show)
 
 actValue :: Value
@@ -24,6 +27,9 @@ instance Primitive Prim where
     primitiveType PPlyLoseCoin = ([TPlayer, TNumber], TAction)
     primitiveType PThen = ([TAction, TAction], TAction)
     primitiveType PIf = ([TCondition, TAction], TAction)
+    primitiveType PAlways = ([], TCondition)
+    primitiveType PNever = ([], TCondition)
+    primitiveType (PConst _) = ([], TNumber)
     runPrimitive PPlyDrawN [p, n] = do
         p' <- p
         n' <- n
@@ -50,6 +56,9 @@ instance Primitive Prim where
                 _ <- a
                 return actValue
             else return actValue
+    runPrimitive PAlways [] = return $ mkValue True
+    runPrimitive PNever [] = return $ mkValue False
+    runPrimitive (PConst v) [] = return $ mkValue v
     runPrimitive _ _ = error "Wrong number of arguments to primitive"
 
 -- | Gets a list of strings used to display a primitive to a user. These
@@ -60,3 +69,6 @@ primitiveText PPlyGainCoin = ["", " gains ", " coins"]
 primitiveText PPlyLoseCoin = ["", " loses ", " coins"]
 primitiveText PThen = ["", ", then " , ""]
 primitiveText PIf = ["if ", ", then ", ""]
+primitiveText PAlways = ["always"]
+primitiveText PNever = ["never"]
+primitiveText (PConst v) = [show v]

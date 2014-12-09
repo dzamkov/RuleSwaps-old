@@ -81,8 +81,9 @@ data Term p h where
 -- identified by type @h@.
 data Game p h a where
 
-    -- | The given player draws from their deck.
-    Draw :: Player h -> Game p h ()
+    -- | The given player draws from their deck. Returns the identifier for
+    -- the drawn card.
+    Draw :: Player h -> Game p h h
 
     -- | The given player gains the given number of coins (or loses, when
     -- negative).
@@ -129,14 +130,14 @@ termType (App _ p args) = (slotTypes, resultType) where
     (_, resultType) = primitiveType p
     slotTypes = List.concatMap (fst . termType) args
 
--- | The given player draws a card.
-draw :: Player h -> Game p h ()
+-- | The given player draws a card. Returns the identifier for the drawn card.
+draw :: Player h -> Game p h h
 draw = Draw
 
 -- | The given player draws the given number of cards.
 drawN :: Player h -> Integer -> Game p h ()
 drawN _ 0 = return ()
-drawN p 1 = draw p
+drawN p 1 = void (draw p)
 drawN p n = draw p >>= (\_ -> drawN p (n - 1))
 
 -- | The given player gains (or loses) the given number of coins.
