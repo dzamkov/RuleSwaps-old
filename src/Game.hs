@@ -12,6 +12,8 @@ module Game (
     Term (..),
     Card,
     Deck,
+    deckSize,
+    deckTake,
     termType,
     PlayerState (..),
     GameState (..),
@@ -104,6 +106,20 @@ type Card p = Term p ()
 
 -- | Describes a possible deck.
 type Deck p = [(Card p, Integer)]
+
+-- | Gets the total number of cards in a deck.
+deckSize :: Deck p -> Integer
+deckSize = List.sum . List.map snd
+
+-- | Takes the nth card from a deck.
+deckTake :: Deck p -> Integer -> (Deck p, Card p)
+deckTake deck i = (nDeck, card) where
+    (nDeck, Right card) = List.foldl (\accum item -> case (accum, item) of
+        ((nDeck, Right card), item) -> (item : nDeck, Right card)
+        ((nDeck, Left i), (card, mult)) | i < mult ->
+            ((card, mult - 1) : nDeck, Right card)
+        ((nDeck, Left i), item@(_, mult)) ->
+            (item : nDeck, Left (i - mult))) ([], Left i) deck
 
 -- | Contains all publicly-available information about a player in a game.
 data PlayerState = PlayerState {
