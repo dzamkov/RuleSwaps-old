@@ -10,7 +10,7 @@ module Rand (
 import qualified BinaryUtils as U
 import Data.Word (Word8)
 import Data.Bits
-import "monads-tf" Control.Monad.State (State, runState, evalState, get, put)
+import "mtl" Control.Monad.State (State, runState, evalState, get, put)
 import Control.Applicative
 
 -- | A procedure that produces a random value from a stream of random bytes.

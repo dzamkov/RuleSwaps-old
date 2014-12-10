@@ -7,7 +7,7 @@ executable rule-swaps
   hs-source-dirs: src
   main-is:		  Main.hs
   build-depends:  base ==4.6.*,
-                  monads-tf,
+                  mtl,
                   binary,
                   cryptohash,
                   bytestring,
