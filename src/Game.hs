@@ -302,7 +302,7 @@ pause = interaction Pause
 message :: String -> Game p ()
 message m = Cont (Message m) Return
 
--- | Gives context to a game action by associating it with a slow, rule,
+-- | Gives context to a game action by associating it with a slot, rule,
 -- or card. This is purely for user feedback.
 context :: Object -> Game p a -> Game p a
 context id inner = Cont (Context id inner) Return
