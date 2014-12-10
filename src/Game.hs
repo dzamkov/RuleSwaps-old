@@ -14,6 +14,7 @@ module Game (
     Deck,
     deckSize,
     deckTake,
+    deckDraw,
     termType,
     PlayerState (..),
     GameState (..),
@@ -30,12 +31,13 @@ module Game (
     drawN,
     gainCoins,
     loseCoins,
-    roll,
+    rand,
     pause,
     message,
     context
 ) where
 
+import Rand (Rand, roll)
 import Data.Typeable (Typeable, cast)
 import Control.Monad
 import Control.Applicative
@@ -121,6 +123,19 @@ deckTake deck i = (nDeck, card) where
         ((nDeck, Left i), item@(_, mult)) ->
             (item : nDeck, Left (i - mult))) ([], Left i) deck
 
+-- | Randomly draws a number of cards from a deck. A replacement deck must be
+-- given in the event that the deck runs out of cards.
+deckDraw :: Deck p -> Integer -> Deck p -> Rand (Deck p, [Card p])
+deckDraw repl n cur = go size n cur [] where
+    size = deckSize cur
+    repln = deckSize repl
+    go 0 n _ accum = go repln n repl accum
+    go _ 0 cur accum = return (cur, List.reverse accum)
+    go size n cur accum = do
+        i <- roll size
+        let (nCur, card) = deckTake cur i
+        go (size - 1) (n - 1) nCur (card : accum)
+
 -- | Contains all publicly-available information about a player in a game.
 data PlayerState = PlayerState {
 
@@ -175,9 +190,9 @@ data PlayerChoice p a where
 -- information. These require coordination between players somehow.
 data GameInteract p a where
 
-    -- | The given player draws from their deck. Returns the identifier for
-    -- the drawn card.
-    Draw :: Player -> GameInteract p Object
+    -- | The given player draws the given amount of cards from their deck.
+    -- Returns the identifiers for the drawn cards.
+    Draw :: Player -> Integer -> GameInteract p [Object]
 
     -- | The given player has to make a choice.
     Choice :: Player -> PlayerChoice p a -> GameInteract p a
@@ -185,9 +200,8 @@ data GameInteract p a where
     -- | All players have to make a choice.
     ChoiceAll :: PlayerChoice p a -> GameInteract p [(Player, a)]
 
-    -- | Performs a public random roll for a natural number less than the given
-    -- number.
-    Roll :: Integer -> GameInteract p Integer
+    -- | A public random value is generated.
+    Rand :: Rand a -> GameInteract p a
 
     -- | The game is paused until a human decides to continue it, giving the
     -- human's a chance to see what is happening.
@@ -273,13 +287,11 @@ state = Cont Read Return
 
 -- | The given player draws a card. Returns the identifier for the drawn card.
 draw :: Player -> Game p Object
-draw p = interaction (Draw p)
+draw p = head <$> interaction (Draw p 1)
 
 -- | The given player draws the given number of cards.
-drawN :: Player -> Integer -> Game p ()
-drawN _ 0 = return ()
-drawN p 1 = void (draw p)
-drawN p n = draw p >>= (\_ -> drawN p (n - 1))
+drawN :: Player -> Integer -> Game p [Object]
+drawN p n = interaction (Draw p n)
 
 -- | The given player gains the given number of coins.
 gainCoins :: Player -> Integer -> Game p ()
@@ -289,10 +301,9 @@ gainCoins p n = effect (Bank p n)
 loseCoins :: Player -> Integer -> Game p ()
 loseCoins p n = effect (Bank p (-n))
 
--- | Performs a public random roll for a natural number less than the given
--- number.
-roll :: Integer -> Game p Integer
-roll n = interaction (Roll n)
+-- | Gets a public random value.
+rand :: Rand a -> Game p a
+rand = interaction . Rand
 
 -- | Pauses the game for a human player to continue it.
 pause :: Game p ()

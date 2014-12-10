@@ -1,6 +1,8 @@
 module BinaryUtils (
     putFixedList,
     getFixedList,
+    unroll,
+    roll,
     putFixedInteger,
     getFixedInteger,
     runPutStrict,

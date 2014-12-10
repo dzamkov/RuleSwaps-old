@@ -10,7 +10,7 @@ module Key (
     toInteger,
     encrypt,
     decrypt,
-    roll,
+    toRandStream,
     rand
 ) where
 
@@ -18,6 +18,7 @@ import Prelude hiding (length, fromInteger, toInteger)
 import BinaryUtils
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
+import Data.Word (Word8)
 import qualified Data.ByteString as B
 import qualified Crypto.Hash.SHA256 as SHA
 import System.Entropy (getEntropy)
@@ -68,10 +69,11 @@ encrypt _ x = x -- TODO: improve security
 decrypt :: Key -> ByteString -> ByteString
 decrypt _ x = x
 
--- | Uses a key to select a "random" natural number less than the given
--- number.
-roll :: Integer -> Key -> Integer
-roll n k = toInteger k `mod` n
+-- | Converts a key into a stream of random bytes. The key must already be
+-- semi-random and the key may be reconstructed from the stream.
+toRandStream :: Key -> [Word8]
+toRandStream k@(Key a) = B.unpack a ++ toRandStream (hash k)
+    -- TODO: make better
 
 -- | Generates a random key
 rand :: IO Key
