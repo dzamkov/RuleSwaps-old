@@ -3,6 +3,7 @@ module Key (
     Key,
     length,
     hashData,
+    hashObj,
     hash,
     merge,
     split,
@@ -16,6 +17,7 @@ module Key (
 
 import Prelude hiding (length, fromInteger, toInteger)
 import BinaryUtils
+import Data.Binary (Binary, put)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
@@ -34,6 +36,10 @@ length = 32
 -- | Hashes a 'ByteString' to get a key. This is cryptographically secure.
 hashData :: ByteString -> Key
 hashData = Key . SHA.hash
+
+-- | Hashes an object. This is cryptographically secure.
+hashObj :: (Binary a) => a -> Key
+hashObj x = hashData (runPutStrict $ put x)
 
 -- | Hashes a key to get another key. This is cryptographically secure.
 hash :: Key -> Key
