@@ -5,6 +5,7 @@ module Key (
     hashData,
     hashObj,
     hash,
+    zero,
     merge,
     split,
     fromInteger,
@@ -17,17 +18,21 @@ module Key (
 
 import Prelude hiding (length, fromInteger, toInteger)
 import BinaryUtils
-import Data.Binary (Binary, put)
+import Data.Binary (Binary, put, get)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import qualified Data.ByteString as B
 import qualified Crypto.Hash.SHA256 as SHA
 import System.Entropy (getEntropy)
+import Control.Applicative
 
 -- | A cryptographically secure key that can be used for random number
 -- generation and arbitration.
 newtype Key = Key ByteString deriving (Eq, Ord, Show)
+instance Binary Key where
+    put (Key a) = putFixedList length $ B.unpack a
+    get = Key . B.pack <$> getFixedList length
 
 -- | The number of bytes in a key.
 length :: Int
@@ -44,6 +49,10 @@ hashObj x = hashData (runPutStrict $ put x)
 -- | Hashes a key to get another key. This is cryptographically secure.
 hash :: Key -> Key
 hash (Key input) = hashData input
+
+-- | A key which is the identity for 'merge'.
+zero :: Key
+zero = Key $ B.replicate length 0
 
 -- | Merges two keys into a single key. This is not cryptographically secure
 -- It is possible to recover one of the input keys given the other input key

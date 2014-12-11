@@ -54,7 +54,7 @@ import qualified Data.List as List
 type Object = Int
 
 -- | Identifies a player in a game.
-newtype Player = Player Object deriving (Eq, Show, Typeable)
+newtype Player = Player Object deriving (Eq, Ord, Show, Typeable)
 
 -- | Identifies a type/category of value within the game.
 data Type
