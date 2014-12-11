@@ -27,6 +27,7 @@ module Game (
     GameEffect (..),
     GameAction (..),
     Game,
+    runGame,
     interaction,
     effect,
     state,
@@ -142,7 +143,7 @@ deckDraw repl n cur = go size n cur [] where
         go (size - 1) (n - 1) nCur (card : accum)
 
 -- | Contains all publicly-available information about a player in a game.
-data PlayerState = PlayerState {
+data PlayerState p = PlayerState {
 
     -- | The name of the player.
     name :: String,
@@ -151,7 +152,10 @@ data PlayerState = PlayerState {
     coins :: Integer,
 
     -- | The set of cards the player is holding.
-    cards :: [Object] }
+    cards :: [Object],
+
+    -- | The deck this player will use once their current deck is out.
+    replDeck :: Deck p }
 
 -- | Contains all publicly-available information about a game at a particular
 -- moment between actions.
@@ -159,7 +163,7 @@ data GameState p = GameState {
 
     -- | The set of players in the game in turn order. The current player
     -- is first, the next player is next, and so on.
-    players :: [(Player, PlayerState)],
+    players :: [(Player, PlayerState p)],
 
     -- | The current game constitution.
     constitution :: [(Object, Term p Object)],
@@ -172,12 +176,15 @@ data GameState p = GameState {
 
 -- | Gets the state of a player in a 'GameState', assuming the player is in
 -- the game.
-getPlayer :: Player -> GameState p -> PlayerState
+getPlayer :: Player -> GameState p -> PlayerState p
 getPlayer target state = snd $ fromMaybe (error "Player does not exist") $
     List.find ((== target) . fst) $ players state
 
 -- | Contains game information that a player keeps to themselves.
 data PrivateState p = PrivateState {
+
+    -- | Contains the current decks for each player.
+    curDecks :: Map Player (Deck p),
 
     -- | Contains the identities of all known cards.
     cardInfo :: Map Object (Card p) }
@@ -254,7 +261,7 @@ data GameAction p a where
 
 -- | Describes a complex procedure/action in game logic that produces a result
 -- of type @a@, assuming that @p@ encodes primitive operations.
-data Game p a = Game { runGame :: (Monad m)
+data Game p a = Game { runGame :: forall m. (Monad m)
     => (forall b. GameAction p b -> m b) -> m a }
 
 instance Functor (Game p) where
