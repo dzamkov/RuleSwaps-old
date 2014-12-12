@@ -15,3 +15,5 @@ executable rule-swaps
                   entropy,
                   text,
                   ansi-terminal
+  if os(windows)
+    extra-libraries:  msvcrt
