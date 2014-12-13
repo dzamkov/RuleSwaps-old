@@ -1,21 +1,27 @@
 module Terminal.Draw (
     X, Y,
     Point,
+    changePosition,
     Width,
     Height,
     CompleteColor,
+    changeBackground,
     Appearance,
+    changeAppearance,
+    setAppearance,
     defaultAppearance,
     Draw,
     runDraw,
+    drawNone,
     (|%),
     drawStr,
-    drawSpace
+    drawSpace,
+    runDrawInline
 ) where
 
 import System.Console.ANSI
 import Data.Maybe (catMaybes)
-import Control.Monad (when, unless, (>=>))
+import Control.Monad
 
 -- | Describes the X offset of a point from the left edge of the terminal.
 type X = Int
@@ -62,6 +68,12 @@ changeAppearance (oldB, oldF) (newB@(newBI, newBC), newF@(newFI, newFC)) =
              ifc (oldF /= newF) Foreground newFI newFC]
     in unless (null coms) $ setSGR coms
 
+-- | Sets the appearance of future written text.
+setAppearance :: Appearance -> IO ()
+setAppearance ((bi, bc), (fi, fc)) =
+    setSGR [SetColor Background bi bc,
+        SetColor Foreground fi fc]
+
 -- | The default appearance for some terminal.
 defaultAppearance :: Appearance
 defaultAppearance = ((Dull, Black), (Dull, White))
@@ -81,6 +93,10 @@ newtype Draw = Draw {
     -- | Performs a drawing operation on the current terminal.
     runDraw :: State -> IO State }
 
+-- | Does no drawing.
+drawNone :: Draw
+drawNone = Draw return
+
 -- | Combines two drawing operations. When overwrite is possible, drawings in
 -- the second operation take precedence.
 (|%) :: Draw -> Draw -> Draw
@@ -88,6 +104,7 @@ newtype Draw = Draw {
 
 -- | Draws a string with the given appearance to the given point.
 drawStr :: Appearance -> Point -> String -> Draw
+drawStr _ _ [] = drawNone
 drawStr appr (x, y) str = Draw $ \st -> do
     changeState st ((x, y), appr)
     putStr str
@@ -96,8 +113,20 @@ drawStr appr (x, y) str = Draw $ \st -> do
 -- | Draws a horizontal space with the given back color and width to the given
 -- point.
 drawSpace :: CompleteColor -> Point -> Width -> Draw
+drawSpace _ _ 0 = drawNone
 drawSpace back (x, y) wid = Draw $ \(oldPos, (oldB, oldF)) -> do
     changePosition oldPos (x, y)
     changeBackground oldB back
     putStr $ replicate wid ' '
     return ((x + wid, y), (back, oldF))
+
+-- | Performs a drawing operation on the current terminal within a REPL
+-- output section. This assumes that the origin of the drawing is at the top-
+-- left corner of the section.
+runDrawInline :: Height -> Draw -> IO ()
+runDrawInline height draw = do
+    setAppearance defaultAppearance
+    replicateM_ height $ putStrLn ""
+    cursorUp height
+    st <- runDraw draw ((0, 0), defaultAppearance)
+    changeState st ((0, height), defaultAppearance)
