@@ -129,7 +129,7 @@ tightText appr text = res where
         (x, y) = flowStart pl
         back = flowBack pl
         rem = left + width - x
-        cont accum y text =
+        cont accum y text = -- TODO: Y limit
             case splitAt width text of
                 (text, []) ->
                     (accum |% drawStr appr (left, y) text,
@@ -166,7 +166,7 @@ space size = res where
         (left, width) = (flowLeft pl, flowWidth pl)
         (x, y) = flowStart pl
         back = flowBack pl
-        res = case () of
+        res = case () of -- TODO: Y limit
             _ | x == left -> (drawNone, (x, y))
             _ | x + size >= left + width ->
                 (drawSpace back (x, y) (left + width - x), (left, y + 1))

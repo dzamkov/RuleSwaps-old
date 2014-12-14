@@ -6,7 +6,7 @@ cabal-version:       >=1.8
 executable rule-swaps
   hs-source-dirs: src
   main-is:		  Main.hs
-  build-depends:  base ==4.6.*,
+  build-depends:  base,
                   mtl,
                   containers,
                   binary,
@@ -17,3 +17,10 @@ executable rule-swaps
                   ansi-terminal
   if os(windows)
     extra-libraries:  msvcrt
+test-suite test
+  hs-source-dirs: testsuite src
+  type:           exitcode-stdio-1.0
+  main-is:        Tests/Main.hs
+  build-depends:  base,
+                  mtl,
+                  HUnit
