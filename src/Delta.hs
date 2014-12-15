@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Delta (
     Delta,
     IsDelta (..),
@@ -11,7 +12,8 @@ module Delta (
     HasDelta,
     DeltaMap,
     deltaMap,
-    eqdeltaMap,
+    eqDeltaMap,
+    idDeltaMap,
     undeltaMap,
     SimpDelta (..)
 ) where
@@ -52,17 +54,22 @@ type DeltaMap a b = a -> Delta a -> Maybe b -> Delta b
 deltaMap :: (HasDelta a, HasDelta b) => (a -> b) -> DeltaMap a b
 deltaMap f oi di _ =
     let ni = apply di oi
-    in set (f ni)
+        no = f ni
+    in set no
 
 -- | Converts a regular mapping function into a 'DeltaMap' that takes into
 -- account equailty of output values in order to sometimes produce 'keep'.
-eqdeltaMap :: (HasDelta a, HasDelta b, Eq b) => (a -> b) -> DeltaMap a b
-eqdeltaMap f oi di oo =
+eqDeltaMap :: (HasDelta a, HasDelta b, Eq b) => (a -> b) -> DeltaMap a b
+eqDeltaMap f oi di oo =
     let ni = apply di oi
         no = f ni
     in case oo of
         Just oo | no == oo -> keep
         _ -> set no
+
+-- | The identity delta map.
+idDeltaMap :: DeltaMap a a
+idDeltaMap _ di _ = di
 
 -- | Converts a 'DeltaMap' into a regular mapping function.
 undeltaMap :: (HasDelta a, HasDelta b) => DeltaMap a b -> a -> b
@@ -82,7 +89,26 @@ instance DeltaRel a (SimpDelta a) where
     apply (Set x) _ = x
     set = Set
 
+-- Define Delta's for tuples.
+instance (IsDelta a, IsDelta b) => IsDelta (a, b) where
+    keep = (keep, keep)
+    isKeep (x, y) = isKeep x && isKeep y
+    merge (a, b) (c, d) = (merge a c, merge b d)
+instance (DeltaRel a c, DeltaRel b d) => DeltaRel (a, b) (c, d) where
+    apply (a, b) (c, d) = (apply a c, apply b d)
+    set (x, y) = (set x, set y)
+instance (IsDelta a, IsDelta b, IsDelta c) => IsDelta (a, b, c) where
+    keep = (keep, keep, keep)
+    isKeep (x, y, z) = isKeep x && isKeep y && isKeep z
+    merge (a, b, c) (d, e, f) = (merge a d, merge b e, merge c f)
+instance (DeltaRel a d, DeltaRel b e, DeltaRel c f)
+    => DeltaRel (a, b, c) (d, e, f) where
+        apply (a, b, c) (d, e, f) = (apply a d, apply b e, apply c f)
+        set (x, y, z) = (set x, set y, set z)
+
 -- Define Delta's for basic types.
 type instance Delta Bool = SimpDelta Bool
 type instance Delta Int = SimpDelta Int
 type instance Delta Integer = SimpDelta Integer
+type instance Delta (a, b) = (Delta a, Delta b)
+type instance Delta (a, b, c) = (Delta a, Delta b, Delta c)
