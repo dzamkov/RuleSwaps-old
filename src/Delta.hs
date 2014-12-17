@@ -14,7 +14,6 @@ module Delta (
     deltaMap,
     eqDeltaMap,
     idDeltaMap,
-    undeltaMap,
     SimpDelta (..)
 ) where
 
@@ -48,32 +47,27 @@ class IsDelta d => DeltaRel a d | d -> a where
 type HasDelta a = DeltaRel a (Delta a)
 
 -- | A mapping function between @a@ and @b@ that can use delta's.
-type DeltaMap a b = a -> Delta a -> Maybe b -> Delta b
+type DeltaMap a b = (a -> b, a -> Delta a -> Delta b)
 
 -- | Converts a regular mapping function into a 'DeltaMap'.
 deltaMap :: (HasDelta a, HasDelta b) => (a -> b) -> DeltaMap a b
-deltaMap f oi di _ =
-    let ni = apply di oi
-        no = f ni
-    in set no
+deltaMap f = (f, dmap) where
+    dmap _ di | isKeep di = keep
+    dmap oi di = set $ f $ apply di oi
 
 -- | Converts a regular mapping function into a 'DeltaMap' that takes into
 -- account equailty of output values in order to sometimes produce 'keep'.
 eqDeltaMap :: (HasDelta a, HasDelta b, Eq b) => (a -> b) -> DeltaMap a b
-eqDeltaMap f oi di oo =
-    let ni = apply di oi
-        no = f ni
-    in case oo of
-        Just oo | no == oo -> keep
-        _ -> set no
+eqDeltaMap f = (f, dmap) where
+    dmap _ di | isKeep di = keep
+    dmap oi di =
+        let no = f $ apply di oi
+            oo = f oi
+        in if oo == no then keep else set no
 
 -- | The identity delta map.
-idDeltaMap :: DeltaMap a a
-idDeltaMap _ di _ = di
-
--- | Converts a 'DeltaMap' into a regular mapping function.
-undeltaMap :: (HasDelta a, HasDelta b) => DeltaMap a b -> a -> b
-undeltaMap f i = apply (f undefined (set i) Nothing) undefined
+idDeltaMap :: (HasDelta a) => DeltaMap a a
+idDeltaMap = (id, \_ di -> di)
 
 -- | A simple delta type for type @a@ which just records whether the old value
 -- is kept, or what value it is changed to, if it is changed.
@@ -82,8 +76,8 @@ instance IsDelta (SimpDelta a) where
     keep = Keep
     isKeep Keep = True
     isKeep _ = False
-    merge Keep x = x
-    merge x _ = x
+    merge x Keep = x
+    merge _ x = x
 instance DeltaRel a (SimpDelta a) where
     apply Keep x = x
     apply (Set x) _ = x

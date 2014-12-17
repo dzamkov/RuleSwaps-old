@@ -23,4 +23,5 @@ test-suite test
   main-is:        Tests/Main.hs
   build-depends:  base,
                   mtl,
+                  containers,
                   HUnit

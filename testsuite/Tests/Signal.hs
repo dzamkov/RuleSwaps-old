@@ -3,59 +3,79 @@ module Tests.Signal (
 ) where
 
 import Delta
-import Signal hiding (map)
-import qualified Signal
+import Signal
 import Test.HUnit
 import Control.Monad.Trans (lift)
+import Control.Monad (forM)
+import Control.Applicative
 
 mapTest :: IO ()
 mapTest = runReactT $ do
-    (xI, x) <- input (5 :: Int)
-    let y = Signal.map (deltaMap (+ 3)) x
-    (yO, yV) <- output y
+    (x, xI) <- input (5 :: Int)
+    let y = dmap (deltaMap (+ 3)) x
+    (yV, yO) <- output y
     lift $ assertEqual "for initial output," 8 yV
-    (yD, yV) <- look yO
-    lift $ assertEqual "for initial look delta," keep yD
+    (yD, yV) <- yO
     lift $ assertEqual "for initial look value," 8 yV
-    update xI $ set 8
-    (yD, yV) <- look yO
-    lift $ assertEqual "for updated look delta," (set 11) yD
+    lift $ assertEqual "for initial look delta," keep yD
+    xI $ set 8
+    (yD, yV) <- yO
     lift $ assertEqual "for updated look value," 11 yV
-    update xI keep
-    (_, yV) <- look yO
+    lift $ assertEqual "for updated look delta," (set 11) yD
+    xI keep
+    (_, yV) <- yO
     lift $ assertEqual "for pseudo-updated look value," 11 yV
 
 deferTest :: IO ()
 deferTest = runReactT $ do
-    (xI, x) <- input (5 :: Int)
-    (yI, y) <- input (8 :: Int)
-    (zI, z) <- input x
-    let a = Signal.defer z
-    let b = Signal.map (deltaMap (* 2)) a
-    let c = Signal.map (deltaMap (+ 3)) x
-    (bO, bV) <- output b
-    (cO, cV) <- output c
+    (x, xI) <- input (5 :: Int)
+    (y, yI) <- input (8 :: Int)
+    (z, zI) <- input x
+    let a = defer z
+    let b = dmap (deltaMap (* 2)) a
+    let c = dmap (deltaMap (+ 3)) x
+    (bV, bO) <- output b
+    (cV, cO) <- output c
     lift $ assertEqual "for initial output," 10 bV
     lift $ assertEqual "for initial alternate output," 8 cV
-    update xI $ set 7
-    update yI $ set 13
-    (_, bV) <- look bO
+    xI $ set 7
+    yI $ set 13
+    (_, bV) <- bO
     lift $ assertEqual "for second output," 14 bV
-    update zI $ set y
-    update xI $ set 3
-    (_, cV) <- look cO
+    zI $ set y
+    xI $ set 3
+    (_, cV) <- cO
     lift $ assertEqual "for second alternate output," 6 cV
-    (_, bV) <- look bO
+    (_, bV) <- bO
     lift $ assertEqual "for third output," 26 bV
-    update yI $ set 4
-    (_, bV) <- look bO
+    yI $ set 4
+    (_, bV) <- bO
     lift $ assertEqual "for fourth output," 8 bV
-    update zI $ set x
-    update yI $ set 12
-    (_, bV) <- look bO
+    zI $ set x
+    yI $ set 12
+    (_, bV) <- bO
     lift $ assertEqual "for last output," 6 bV
+
+stressTest :: IO ()
+stressTest = runReactT $ do
+    inputs <- mapM input (take 100 $ repeat (1 :: Integer))
+    let pyramid xs = case xs of
+          (x : y : xs) ->
+            let z = dmap (deltaMap (\(x, y) -> x + y)) $ plex2 x y
+            in z : pyramid (y : xs)
+          _ -> []
+    let [final] = (iterate pyramid $ map fst inputs) !! 99
+    (fV, fO) <- output final
+    lift $ assertEqual "for initial output," (2 ^ 99) fV
+    snd (inputs !! 1) $ set 2
+    (_, fV) <- fO
+    lift $ assertEqual "for second output," (2 ^ 99 + 99) fV
+    forM inputs (\(_, i) -> i $ set 5)
+    (_, fV) <- fO
+    lift $ assertEqual "for third output," (5 * 2 ^ 99) fV
 
 tests :: Test
 tests = test [
     "map" ~: test mapTest,
-    "defer" ~: test deferTest]
+    "defer" ~: test deferTest,
+    "stress" ~: test stressTest]
