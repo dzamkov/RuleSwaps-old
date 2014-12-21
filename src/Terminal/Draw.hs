@@ -87,38 +87,49 @@ changeState (oldPos, oldAppr) (newPos, newAppr) = do
     changePosition oldPos newPos
     changeAppearance oldAppr newAppr
 
--- | A procedure which draws something to the terminal.
-newtype Draw = Draw {
+-- | A primitive operation which draws something to the terminal.
+data DrawOp
+    = String Appearance Point String
+    | Space CompleteColor Point Width
 
-    -- | Performs a drawing operation on the current terminal.
-    runDraw :: State -> IO State }
+-- | Performs a drawing operation on the current terminal.
+runDrawOp :: DrawOp -> State -> IO State
+runDrawOp (String appr (x, y) str) st = do
+    changeState st ((x, y), appr)
+    putStr str
+    return ((x + length str, y), appr)
+runDrawOp (Space back (x, y) wid) (oldPos, (oldB, oldF)) = do
+    changePosition oldPos (x, y)
+    changeBackground oldB back
+    putStr $ replicate wid ' '
+    return ((x + wid, y), (back, oldF))
+
+-- | A procedure which draws something to the terminal.
+newtype Draw = Draw [DrawOp]
+
+-- | Performs a drawing procedure on the current terminal.
+runDraw :: Draw -> State -> IO State
+runDraw (Draw ops) st = foldM (flip runDrawOp) st ops
 
 -- | Does no drawing.
 none :: Draw
-none = Draw return
+none = Draw []
 
 -- | Combines two drawing operations. When overwrite is possible, drawings in
 -- the second operation take precedence.
 (|%) :: Draw -> Draw -> Draw
-(|%) (Draw a) (Draw b) = Draw (a >=> b)
+(|%) (Draw a) (Draw b) = Draw (a ++ b)
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw
 string _ _ [] = none
-string appr (x, y) str = Draw $ \st -> do
-    changeState st ((x, y), appr)
-    putStr str
-    return ((x + length str, y), appr)
+string appr point str = Draw [String appr point str]
 
 -- | Draws a horizontal space with the given back color and width to the given
 -- point.
 space :: CompleteColor -> Point -> Width -> Draw
 space _ _ 0 = none
-space back (x, y) wid = Draw $ \(oldPos, (oldB, oldF)) -> do
-    changePosition oldPos (x, y)
-    changeBackground oldB back
-    putStr $ replicate wid ' '
-    return ((x + wid, y), (back, oldF))
+space back point wid = Draw [Space back point wid]
 
 -- | Performs a drawing operation on the current terminal within a REPL
 -- output section. This assumes that the origin of the drawing is at the top-
