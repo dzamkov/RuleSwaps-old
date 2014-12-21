@@ -28,6 +28,7 @@ class IsDelta a where
 
     -- | Returns true if the given delta is definitely 'keep'.
     isKeep :: a -> Bool
+    isKeep _ = False
 
     -- | Combines two delta's.
     merge :: a -> a -> a

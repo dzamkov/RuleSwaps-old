@@ -2,35 +2,31 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Terminal.Figure (
-    Flow,
-    Block,
-    Dock,
     Layout (..),
     Placement (..),
+    Flow,
+    Block,
+    Fix,
+    Vary,
+    Dock,
+    HasBlockWidth (..),
+    HasBlockHeight (..),
     Bonus,
     Figure (..),
     tightText,
     space,
     FlowLike ((+++)),
     text,
+    setWidth,
+    setHeight,
     test
 ) where
 
 import System.Console.ANSI
-import Terminal.Draw
-
--- | Marks a figure as flowed, that is, linear and horizontal with the ability
--- to be broken up into parts, much like text.
-data Flow
-
--- | Marks a figure as a block, that is, taking up a fixed-size rectangular
--- area.
-data Block
-
--- | Marks a figure as docked, that is, taking up a variable-size rectangular
--- area.
-data Dock
+import Terminal.Draw hiding (space)
+import qualified Terminal.Draw as Draw
 
 -- | Describes the sizing information contained with a figure with the given
 -- mark.
@@ -43,6 +39,10 @@ data family Placement a
 -- | Contains potentially useful information that was computed during the
 -- drawing of a figure.
 type family Bonus a
+
+-- | Marks a figure as flowed, that is, linear and horizontal with the ability
+-- to be broken up into parts, much like text.
+data Flow
 
 -- | Contains sizing information for a flowed figure.
 data instance Layout Flow = FlowLayout {
@@ -61,18 +61,6 @@ data instance Layout Flow = FlowLayout {
     -- accurate.
     flowTrialPlace :: Placement Flow -> Point }
 
--- | Contains sizing information for a block figure.
-data instance Layout Block = BlockLayout {
-
-    -- | The width of the block.
-    blockWidth :: Width,
-
-    -- | The height of the block.
-    blockHeight :: Height }
-
--- | Contains the non-existant sizing information for a docked figure.
-data instance Layout Dock = DockLayout
-
 -- | Contains the placement information for a flowed figure.
 data instance Placement Flow = FlowPlacement {
 
@@ -86,15 +74,96 @@ data instance Placement Flow = FlowPlacement {
     flowWidth :: Width,
 
     -- | The initial position of the cursor in the flow area.
-    flowStart :: Point,
-
-    -- | The vertical offset at which drawing should stop.
-    flowLimit :: Y }
+    flowStart :: Point }
 
 -- | The point at which the remainder of the flow starts.
 type instance Bonus Flow = Point
 
--- | A figure that can be drawn to a terminal.
+-- | Marks a figure as a block, taking up a rectangular area where the size
+-- along the horizontal and vertical axes can independently be fixed or
+-- variable.
+data Block h v
+
+-- | Marks a block axis as fixed-size.
+data Fix
+
+-- | Marks a block axis as variable-size.
+data Vary
+
+-- | Marks a figure as a docked block, taking up a variable-size rectangular
+-- area.
+type Dock = Block Vary Vary
+
+-- | Contains sizing information for a block figure.
+data instance Layout (Block h v) = BlockLayout {
+
+    -- | Contains sizing information for the horizontal axis of this block
+    -- figure.
+    blockLayoutHorizontal :: Layout h,
+
+    -- | Contains sizing information for the vertical axis of this block
+    -- figure.
+    blockLayoutVertical :: Layout v }
+
+-- | Contains placement information for a block figure.
+data instance Placement (Block h v) = BlockPlacement {
+
+    -- | The position of top-left corner the block.
+    blockOffset :: Point,
+
+    -- | Contains placement information for the horizontal axis of this block
+    -- figure.
+    blockPlacementHorizontal :: Placement h,
+
+    -- | Contains placement information for the vertical axis of this block
+    -- figure.
+    blockPlacementVertical :: Placement v }
+
+-- | Contains layout information for a fixed-size axis.
+data instance Layout Fix = FixLayout Width
+
+-- | Contains placement information for a fixed-size axis.
+data instance Placement Fix = FixPlacement
+
+-- | Contains layout information for a variable-size axis.
+data instance Layout Vary = VaryLayout
+
+-- | Contains placement information for a variable-size axis.
+data instance Placement Vary = VaryPlacement Width
+
+-- | @a@ is the type for a layout or placement that has a block width.
+class HasBlockWidth a where
+
+    -- | The width of this block.
+    blockWidth :: a -> Width
+
+-- | @a@ is the type for a layout or placement that has a block height.
+class HasBlockHeight a where
+
+    -- | The height of this block.
+    blockHeight :: a -> Height
+
+instance HasBlockWidth (Layout (Block Fix a)) where
+    blockWidth layout =
+        let (FixLayout width) = blockLayoutHorizontal layout
+        in width
+instance HasBlockWidth (Placement (Block Vary a)) where
+    blockWidth placement =
+        let (VaryPlacement width) = blockPlacementHorizontal placement
+        in width
+instance HasBlockHeight (Layout (Block a Fix)) where
+    blockHeight layout =
+        let (FixLayout height) = blockLayoutVertical layout
+        in height
+instance HasBlockHeight (Placement (Block a Vary)) where
+    blockHeight placement =
+        let (VaryPlacement height) = blockPlacementVertical placement
+        in height
+
+-- | Blocks have no bonus information.
+type instance Bonus (Block h v) = ()
+
+-- | A static figure that can be drawn to a terminal.
 data Figure a = Figure {
 
     -- | Contains sizing and layout information for the figure.
@@ -116,7 +185,7 @@ instance HasEmpty Flow where
             flowMaxWidth = 0,
             flowMinWidth = 0,
             flowTrialPlace = flowStart },
-        prepare = \pl -> (drawNone, flowStart pl) }
+        prepare = \pl -> (none, flowStart pl) }
 
 -- | A flowed figure for text that will not be broken unless necessary.
 tightText :: Appearance -> String -> Figure Flow
@@ -132,25 +201,25 @@ tightText appr text = res where
         cont accum y text = -- TODO: Y limit
             case splitAt width text of
                 (text, []) ->
-                    (accum |% drawStr appr (left, y) text,
+                    (accum |% Draw.string appr (left, y) text,
                     (left + length text, y))
                 (text, tail) -> cont
-                    (accum |% drawStr appr (left, y) text)
+                    (accum |% Draw.string appr (left, y) text)
                     (y + 1) tail
         res = case (size <= rem, size <= width) of
             (True, _) ->
                 let end = (x + size, y)
-                in (end, (drawStr appr (x, y) text, end))
+                in (end, (Draw.string appr (x, y) text, end))
             (False, True) ->
                 let end = (left + size, y + 1)
-                in (end, (drawSpace back (x, y) rem |%
-                    drawStr appr (left, y + 1) text, end))
+                in (end, (Draw.space back (x, y) rem |%
+                    Draw.string appr (left, y + 1) text, end))
             (False, False) ->
                 let end =
                       (left + mod (x + size - left) width,
                       y + div (x + size - left) width)
                 in let (text, tail) = splitAt rem text
-                in (end, cont (drawStr appr (x, y) text) (y + 1) tail)
+                in (end, cont (Draw.string appr (x, y) text) (y + 1) tail)
     res = Figure {
         layout = FlowLayout {
             flowMaxWidth = size,
@@ -166,11 +235,11 @@ space size = res where
         (left, width) = (flowLeft pl, flowWidth pl)
         (x, y) = flowStart pl
         back = flowBack pl
-        res = case () of -- TODO: Y limit
-            _ | x == left -> (drawNone, (x, y))
+        res = case () of
+            _ | x == left -> (Draw.none, (x, y))
             _ | x + size >= left + width ->
-                (drawSpace back (x, y) (left + width - x), (left, y + 1))
-            _ -> (drawSpace back (x, y) size, (x + size, y))
+                (Draw.space back (x, y) (left + width - x), (left, y + 1))
+            _ -> (Draw.space back (x, y) size, (x + size, y))
     res = Figure {
         layout = FlowLayout {
             flowMaxWidth = size,
@@ -210,18 +279,61 @@ text appr = breakSpace 0 where
     breakSpace n (' ' : xs) = breakSpace (n + 1) xs
     breakSpace n (x : xs) = space n +++ breakWord [x] xs
 
+-- | Sets the width of a block with a variable width.
+setWidth :: Width -> Figure (Block Vary a) -> Figure (Block Fix a)
+setWidth width fig = Figure {
+    layout = BlockLayout {
+        blockLayoutHorizontal = FixLayout width,
+        blockLayoutVertical = blockLayoutVertical $ layout fig },
+    prepare = \placement -> prepare fig BlockPlacement {
+        blockOffset = blockOffset placement,
+        blockPlacementHorizontal = VaryPlacement width,
+        blockPlacementVertical = blockPlacementVertical placement } }
+
+-- | Sets the height of a block with a variable width.
+setHeight :: Height -> Figure (Block a Vary) -> Figure (Block a Fix)
+setHeight height fig = Figure {
+    layout = BlockLayout {
+        blockLayoutHorizontal = blockLayoutHorizontal $ layout fig,
+        blockLayoutVertical = FixLayout height },
+    prepare = \placement -> prepare fig BlockPlacement {
+        blockOffset = blockOffset placement,
+        blockPlacementHorizontal = blockPlacementHorizontal placement,
+        blockPlacementVertical = VaryPlacement height } }
+
 -- | Figures of type @a@ can be drawn directly for testing and debugging
 -- purposes.
 class HasTestDraw a where
     test :: Figure a -> IO ()
+
+-- | The width of variable-width figures drawn using 'test'.
+testWidth :: Width
+testWidth = 60
+
+-- | The height of variable-height figures drawn using 'test'.
+testHeight :: Height
+testHeight = 30
 
 instance HasTestDraw Flow where
     test fig = do
         let placement = FlowPlacement {
             flowBack = (Dull, Blue),
             flowLeft = 0,
-            flowWidth = 60,
-            flowStart = (0, 0),
-            flowLimit = 1000 }
+            flowWidth = testWidth,
+            flowStart = (0, 0) }
         let (draw, (_, endY)) = prepare fig placement
         runDrawInline (endY + 1) draw
+instance HasTestDraw (Block Vary Vary) where
+    test = test . setWidth testWidth
+instance HasTestDraw (Block Vary Fix) where
+    test = test . setWidth testWidth
+instance HasTestDraw (Block Fix Vary) where
+    test = test . setHeight testHeight
+instance HasTestDraw (Block Fix Fix) where
+    test fig = do
+        let placement = BlockPlacement {
+            blockOffset = (0, 0),
+            blockPlacementHorizontal = FixPlacement,
+            blockPlacementVertical = FixPlacement }
+        let (draw, _) = prepare fig placement
+        runDrawInline (blockHeight $ layout fig) draw

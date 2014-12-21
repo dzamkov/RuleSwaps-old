@@ -12,10 +12,10 @@ module Terminal.Draw (
     defaultAppearance,
     Draw,
     runDraw,
-    drawNone,
+    none,
     (|%),
-    drawStr,
-    drawSpace,
+    string,
+    space,
     runDrawInline
 ) where
 
@@ -94,8 +94,8 @@ newtype Draw = Draw {
     runDraw :: State -> IO State }
 
 -- | Does no drawing.
-drawNone :: Draw
-drawNone = Draw return
+none :: Draw
+none = Draw return
 
 -- | Combines two drawing operations. When overwrite is possible, drawings in
 -- the second operation take precedence.
@@ -103,18 +103,18 @@ drawNone = Draw return
 (|%) (Draw a) (Draw b) = Draw (a >=> b)
 
 -- | Draws a string with the given appearance to the given point.
-drawStr :: Appearance -> Point -> String -> Draw
-drawStr _ _ [] = drawNone
-drawStr appr (x, y) str = Draw $ \st -> do
+string :: Appearance -> Point -> String -> Draw
+string _ _ [] = none
+string appr (x, y) str = Draw $ \st -> do
     changeState st ((x, y), appr)
     putStr str
     return ((x + length str, y), appr)
 
 -- | Draws a horizontal space with the given back color and width to the given
 -- point.
-drawSpace :: CompleteColor -> Point -> Width -> Draw
-drawSpace _ _ 0 = drawNone
-drawSpace back (x, y) wid = Draw $ \(oldPos, (oldB, oldF)) -> do
+space :: CompleteColor -> Point -> Width -> Draw
+space _ _ 0 = none
+space back (x, y) wid = Draw $ \(oldPos, (oldB, oldF)) -> do
     changePosition oldPos (x, y)
     changeBackground oldB back
     putStr $ replicate wid ' '
