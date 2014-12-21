@@ -16,11 +16,12 @@ module Terminal.Draw (
     (|%),
     string,
     space,
+    clip,
     runDrawInline
 ) where
 
 import System.Console.ANSI
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, mapMaybe)
 import Control.Monad
 
 -- | Describes the X offset of a point from the left edge of the terminal.
@@ -130,6 +131,22 @@ string appr point str = Draw [String appr point str]
 space :: CompleteColor -> Point -> Width -> Draw
 space _ _ 0 = none
 space back point wid = Draw [Space back point wid]
+
+-- | Restricts a draw operation to the given rectangular region.
+clip :: Point -> Width -> Height -> Draw -> Draw
+clip (left, top) width height (Draw ops) = res where
+    bottom = top + height
+    right = left + width
+    clipOp (String _ (_, y) _) | y < top || y >= bottom = Nothing
+    clipOp (String appr (x, y) str) =
+        case drop (left - x) $ take (right - x) str of
+            [] -> Nothing
+            nStr -> Just $ String appr (max left x, y) nStr
+    clipOp (Space _ (_, y) _) | y < top || y >= bottom = Nothing
+    clipOp (Space _ (x, _) size) | x + size <= left || x >= right = Nothing
+    clipOp (Space back (x, y) size) = Just $ Space back (max left x, y)
+        (min (x + size) right - max left x)
+    res = Draw $ mapMaybe clipOp ops
 
 -- | Performs a drawing operation on the current terminal within a REPL
 -- output section. This assumes that the origin of the drawing is at the top-
