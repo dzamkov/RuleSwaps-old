@@ -18,6 +18,8 @@ module Terminal.Draw (
     (|%),
     string,
     space,
+    hline,
+    vline,
     clip,
     runDrawInline
 ) where
@@ -133,6 +135,18 @@ string appr point str = Draw [String appr point str]
 space :: FullColor -> Point -> Width -> Draw
 space _ _ 0 = none
 space back point wid = Draw [Space back point wid]
+
+-- | Draws a horizontal line consisting of the given characters.
+hline :: Appearance -> Char -> Point -> Width -> Draw
+hline _ _ _ 0 = none
+hline appr ch point wid = Draw [String appr point $ replicate wid ch]
+
+-- | Draws a vertical line consisting of the given characters.
+vline :: Appearance -> Char -> Point -> Height -> Draw
+vline _ _ _ 0 = none
+vline appr ch (x, y) height = Draw $
+    map (\offset -> String appr (x, y + offset) [ch])
+    [0 .. height - 1]
 
 -- | Restricts a draw operation to the given rectangular region.
 clip :: Point -> Width -> Height -> Draw -> Draw

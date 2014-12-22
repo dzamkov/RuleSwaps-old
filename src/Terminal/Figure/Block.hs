@@ -2,12 +2,15 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 module Terminal.Figure.Block (
     Block,
     SizeSpecifier,
     Dep,
     SBlock,
-    blockify
+    blockify,
+    box
 ) where
 
 import Terminal.Draw
@@ -71,3 +74,49 @@ blockify back flow = res where
             endSpace = Draw.space back (x + endX, y + endY) (width - endX)
             res = static (pDraw |% endSpace)
     withSize (Right _) = undefined -- TODO: Math and binary search stuff
+
+-- | Blocks of sizing type @s@ can be enclosed by constant- width and height
+-- borders resulting in blocks of sizing type @n@.
+class CanEnclose s n | s -> n where
+
+    -- | Given the total size of the border enclosing a block, gets the
+    -- appropriate mappings for layout and size between the inner block and
+    -- outer block.
+    transEnclose :: s -> (Width, Height)
+        -> (Layout s -> Layout n,
+            SizeSpecifier n -> SizeSpecifier s)
+
+instance CanEnclose Dep Dep where
+    transEnclose _ (width, height) = (f, g) where
+        f () = ()
+        g (Left w) = Left (w - width)
+        g (Right h) = Right (h - height)
+
+-- | Encloses a block with a graphical box
+box :: forall s n. (CanEnclose s n)
+    => Appearance -> Figure (Block s) -> Figure (Block n)
+box appr block = res where
+    (f, g) = transEnclose (undefined :: s) (2, 2)
+    res = Figure {
+        layout = f $ layout block,
+        place = \(To size) -> withSize size }
+    withSize size = res where
+        sBlock = place block $ To (g size)
+        (iWidth, iHeight) = layout sBlock
+        width = iWidth + 2
+        height = iHeight + 2
+        res :: Figure SBlock
+        res = Figure {
+            layout = (width, height),
+            place = \(To offset) -> withOffset offset }
+        withOffset (x, y) = res where
+            sDraw = draw $ place sBlock $ To (x + 1, y + 1)
+            res = static (sDraw |%
+                Draw.string appr (x, y) "+" |%
+                Draw.hline appr '-' (x + 1, y) (width - 2) |%
+                Draw.string appr (x + width - 1, y) "+" |%
+                Draw.vline appr '|' (x + width - 1, y + 1) (height - 2) |%
+                Draw.string appr (x + width - 1, y + height - 1) "+" |%
+                Draw.hline appr '-' (x + 1, y + height - 1) (width - 2) |%
+                Draw.string appr (x, y + height - 1) "+" |%
+                Draw.vline appr '|' (x, y + 1) (height - 2))
