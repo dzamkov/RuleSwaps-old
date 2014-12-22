@@ -4,7 +4,9 @@ module Terminal.Draw (
     changePosition,
     Width,
     Height,
-    CompleteColor,
+    Color (..),
+    ColorIntensity (..),
+    FullColor,
     changeBackground,
     Appearance,
     changeAppearance,
@@ -48,16 +50,16 @@ type Width = Int
 type Height = Int
 
 -- | Describes a color that the terminal can display.
-type CompleteColor = (ColorIntensity, Color)
+type FullColor = (ColorIntensity, Color)
 
 -- | Sets the color of the background for future text written, given the
 -- current background.
-changeBackground :: CompleteColor -> CompleteColor -> IO ()
+changeBackground :: FullColor -> FullColor -> IO ()
 changeBackground old new@(newI, newC) =
     when (old /= new) $ setSGR [SetColor Background newI newC]
 
 -- | Describes the appearance of a glyph on the terminal.
-type Appearance = (CompleteColor, CompleteColor)
+type Appearance = (FullColor, FullColor)
 
 -- | Sets the appearance of future written text given the current appearance
 -- of text.
@@ -91,7 +93,7 @@ changeState (oldPos, oldAppr) (newPos, newAppr) = do
 -- | A primitive operation which draws something to the terminal.
 data DrawOp
     = String Appearance Point String
-    | Space CompleteColor Point Width
+    | Space FullColor Point Width
 
 -- | Performs a drawing operation on the current terminal.
 runDrawOp :: DrawOp -> State -> IO State
@@ -128,7 +130,7 @@ string appr point str = Draw [String appr point str]
 
 -- | Draws a horizontal space with the given back color and width to the given
 -- point.
-space :: CompleteColor -> Point -> Width -> Draw
+space :: FullColor -> Point -> Width -> Draw
 space _ _ 0 = none
 space back point wid = Draw [Space back point wid]
 

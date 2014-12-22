@@ -3,11 +3,10 @@ module Main where
 import System.Console.ANSI
 import Terminal.Figure
 
-back = (Dull, Black)
-appr1 = (back, (Vivid, Cyan))
-appr2 = (back, (Vivid, Green))
-user name = tightText appr1 "<" +++ tightText appr2 name +++ tightText appr1 ">"
+fore1 = (Vivid, Cyan)
+fore2 = (Vivid, Green)
+user name = tightText fore1 "<" +++ tightText fore2 name +++ tightText fore1 ">"
 
 main :: IO ()
-main = test $ user "dr420scopes" +++ (text ((Dull, Black), (Dull, White)) $ take 360 $ cycle
+main = test $ user "dr420scopes" +++ (text (Dull, White) $ take 360 $ cycle
     " blah blah blah  text blah blah  more text blah blah blah blah blah blah")
