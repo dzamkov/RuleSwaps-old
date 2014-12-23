@@ -110,6 +110,9 @@ depend v from to = res where
         Defer ref _ -> modifyIORef ref $ \x ->
             x { signalProps = act v $ signalProps x }
 
+-- | Specifies a time before which all signal data is deleted.
+type Window = Time
+
 -- | Gets an evaluator for primitive signals for the given interval of time.
 evalPrim :: Window -> Time -> Time -> Evaluator PrimSignal IO
 evalPrim win time cur (sig :: PrimSignal a) = res where
@@ -174,6 +177,17 @@ evalPrim win time cur (sig :: PrimSignal a) = res where
                         return (oValue, set nValue)
             stateCheck subeval ref
 
+-- | Constructs a 'PrimSignal' from the given definition.
+prim :: Combinator PrimSignal a -> PrimSignal a
+prim def = Signal $ unsafePerformIO $ do
+    state <- newIORef SignalState {
+        signalData = Map.empty,
+        signalReady = False,
+        signalProps = [] }
+    return SignalInfo {
+        signalState = state,
+        signalDef = def }
+
 -- | Identifies a value of type @a@ that can vary within the context of a
 -- 'ReactT' procedure.
 data Signal r a where
@@ -189,6 +203,13 @@ instance Applicative (Signal r) where
     pure = Const
     (<*>) (Const f) (Const x) = Const (f x)
     (<*>) x y = Ap x y
+instance Deltor (Signal r) where
+    deltor def = res where
+        evalConst (Const x) = Just (x, keep)
+        evalConst _ = Nothing
+        res = case def evalConst of
+            Just (x, _) -> Const x
+            Nothing -> Prim $ prim $ \evalPrim -> def (eval evalPrim)
 
 -- | Like 'eval', but can be used for 'Signal's where it is not known if the
 -- signal type satisfies the constraint 'HasDelta'. Strides are returned with
@@ -214,20 +235,10 @@ evalPure evalPrim (Ap left right) =
 eval :: (Applicative f) => Evaluator PrimSignal f -> Evaluator (Signal r) f
 eval evalPrim sig = second toDelta <$> evalPure evalPrim sig
 
--- | Specifies a time before which all signal data is deleted.
-type Window = Time
-
 -- | Converts a 'Signal' into a 'PrimSignal'.
 primify :: (HasDelta a) => Signal r a -> PrimSignal a
 primify (Prim prim) = prim
-primify sig = Signal $ unsafePerformIO $ do
-    state <- newIORef SignalState {
-        signalData = Map.empty,
-        signalReady = False,
-        signalProps = [] }
-    return SignalInfo {
-        signalState = state,
-        signalDef = (`eval` sig) }
+primify sig = prim (`eval` sig)
 
 -- | Insures the given signal will be only be evaluated once per update.
 cache :: (HasDelta a) => Signal r a -> Signal r a
