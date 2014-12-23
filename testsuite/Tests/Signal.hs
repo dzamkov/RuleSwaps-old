@@ -32,8 +32,8 @@ deferTest = runReactT $ do
     (y, yI) <- input (8 :: Int)
     (z, zI) <- input x
     let a = defer z
-    let b = (* 2) <$> a
-    let c = (+ 3) <$> x
+    let b = cache ((* 2) <$> a)
+    let c = cache ((+ 3) <$> x)
     (bV, bO) <- output b
     (cV, cO) <- output c
     lift $ assertEqual "for initial output," 10 bV

@@ -12,6 +12,10 @@ module Delta (
     IsDelta (..),
     DeltaRel (..),
     HasDelta,
+    Evaluator,
+    Combinator,
+    Deltor (..),
+    staticDeltor,
     SimpDelta (..),
     PureDelta (..),
     toDelta
@@ -53,28 +57,35 @@ class (DeltaImpl a d, IsDelta d) => DeltaRel a d | d -> a where
 -- | Type @a@ has a delta type.
 type HasDelta a = DeltaRel a (Delta a)
 
--- | 'Deltor' is a specialization of 'Applicative' which associates each
--- element with a delta.
+-- | A value paired with a delta which represents the progression of a signal
+-- during an interval of time. The value is the initial value for the beginning
+-- of the interval and the delta is the change over the whole interval.
+type Stride a = (a, Delta a)
+
+-- | A mapping between two functors which can be used to expose strides for
+-- values in the first. If you think of @f@ as a signal, then an evaluator
+-- will get the stride of any signal for a certain interval of time.
+type Evaluator f g = forall a. (HasDelta a) => f a -> g (Stride a)
+
+-- | A function which may use the strides of many @f@ signals to produce the
+-- stride of a single signal of type @a@.
+type Combinator f a = forall g. (Applicative g)
+    => Evaluator f g -> g (Stride a)
+
+-- | 'Deltor' is a specialization of 'Applicative' which associates elements
+-- with deltas. This implies that values of type @f a@ act like time-varying
+-- values of type @a@.
 class Applicative f => Deltor f where
 
-    -- | Constructs a deltor from a function which produces an "original" value
-    -- and delta when given a function to get the "original" value and delta
-    -- of another deltor.
-    deltor :: (HasDelta b)
-        => (forall g. (Applicative g) =>
-            (forall a. (HasDelta a) => f a -> g (a, Delta a))
-            -> g (b, Delta b))
-        -> f b
-    deltor = appDeltor
+    -- | Constructs a signal from a combinator which can be used to get its
+    -- stride for any interval of time.
+    deltor :: (HasDelta a) => Combinator f a -> f a
 
 -- | An implementation of 'deltor' which can be applied to every applicative
--- functor. It assumes that the delta of every element is 'keep'.
-appDeltor :: (Applicative f, HasDelta b)
-    => (forall g. (Applicative g) =>
-        (forall a. (HasDelta a) => f a -> g (a, Delta a))
-        -> g (b, Delta b))
-    -> f b
-appDeltor inner = fst <$> inner ((\x -> (x, keep)) <$>)
+-- functor. It assumes that all time intervals are zero-length, making the
+-- delta of every stride 'keep'.
+staticDeltor :: (Applicative f, HasDelta a) => Combinator f a -> f a
+staticDeltor inner = fst <$> inner ((\x -> (x, keep)) <$>)
 
 -- | A simple delta type for type @a@ which just records whether the old value
 -- is kept, or what value it is changed to, if it is changed.

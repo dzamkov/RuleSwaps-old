@@ -85,23 +85,19 @@ data SignalInfo a = SignalInfo {
     -- | The state for this signal, also identifies the signal.
     signalState :: IORef (SignalState a),
 
-    -- | Evaluates the signal using a function which evaluates a dependent
-    -- signal.
-    signalEval :: forall f. (Applicative f)
-        => (forall r b. (HasDelta b) => PrimSignal r b -> f (b, Delta b))
-        -> f (a, Delta a) }
+    -- | The combinator that defines the values and deltas for this signal.
+    signalDef :: Combinator PrimSignal a }
 
 -- | Like 'Signal' but the type @a@ must have the constraint @HasDelta@,
 -- making 'PrimSignal' unsuitable as an instance of 'Functor'.
-data PrimSignal r a where
-    Input :: IORef (InputState a) -> PrimSignal r a
-    Signal :: SignalInfo a -> PrimSignal r a
-    Defer :: IORef (SignalState a)
-        -> PrimSignal r (Signal r a) -> PrimSignal r a
+data PrimSignal a where
+    Input :: IORef (InputState a) -> PrimSignal a
+    Signal :: SignalInfo a -> PrimSignal a
+    Defer :: IORef (SignalState a) -> PrimSignal (Signal r a) -> PrimSignal a
 
 -- | Sets up or removes a propogation between the given signal and the signal
 -- for the given state.
-depend :: Bool -> PrimSignal r a -> IORef (SignalState b) -> IO ()
+depend :: Bool -> PrimSignal a -> IORef (SignalState b) -> IO ()
 depend v from to = res where
     prop = SignalProp to
     act True props = prop : props
@@ -114,11 +110,9 @@ depend v from to = res where
         Defer ref _ -> modifyIORef ref $ \x ->
             x { signalProps = act v $ signalProps x }
 
--- | Gets the value of the given primitive signal at the given time, along with
--- the delta since then.
-evalPrim :: forall r a. (HasDelta a) => Window -> Time -> Time
-    -> PrimSignal r a -> IO (a, Delta a)
-evalPrim win time cur sig = res where
+-- | Gets an evaluator for primitive signals for the given interval of time.
+evalPrim :: Window -> Time -> Time -> Evaluator PrimSignal IO
+evalPrim win time cur (sig :: PrimSignal a) = res where
     inputClean :: forall b. Map Time b -> Map Time b
     inputClean dat = case Map.lookupLT win dat of
         Just (s, _) -> snd $ Map.split (s - 1) dat
@@ -158,7 +152,7 @@ evalPrim win time cur sig = res where
             return (value, delta)
         (Signal info) -> do
             let ref = signalState info
-            let subeval ready = signalEval info (\sig -> do
+            let subeval ready = signalDef info (\sig -> do
                   unless ready $ depend True sig ref
                   evalPrim win time cur sig)
             stateCheck subeval ref
@@ -167,7 +161,7 @@ evalPrim win time cur sig = res where
                 unless ready $ depend True source ref
                 (target, sourceDelta) <- evalPrim win time cur source
                 case sourceDelta of
-                    Keep -> evalToDelta (\prim -> do
+                    Keep -> eval (\prim -> do
                         unless ready $ depend True prim ref
                         evalPrim win time cur prim) target
                     Set nTarget -> do
@@ -184,7 +178,7 @@ evalPrim win time cur sig = res where
 -- 'ReactT' procedure.
 data Signal r a where
     Const :: a -> Signal r a
-    Prim :: (HasDelta a) => PrimSignal r a -> Signal r a
+    Prim :: (HasDelta a) => PrimSignal a -> Signal r a
     Ap :: Signal r (a -> b) -> Signal r a -> Signal r b
 
 type instance Delta (Signal r a) = SimpDelta (Signal r a)
@@ -196,14 +190,14 @@ instance Applicative (Signal r) where
     (<*>) (Const f) (Const x) = Const (f x)
     (<*>) x y = Ap x y
 
--- | Evaluates the given signal using a function which evaluates a given
--- primitive signal.
-eval :: (Applicative f)
-    => (forall r b. (HasDelta b) => PrimSignal r b -> f (b, Delta b))
+-- | Like 'eval', but can be used for 'Signal's where it is not known if the
+-- signal type satisfies the constraint 'HasDelta'. Strides are returned with
+-- 'PureDelta' instead of the usual 'Delta'.
+evalPure :: (Applicative f) => Evaluator PrimSignal f
     -> Signal r a -> f (a, PureDelta a)
-eval _ (Const x) = pure (x, Simple Keep)
-eval evalPrim (Prim prim) = second Complex <$> evalPrim prim
-eval evalPrim (Ap left right) =
+evalPure _ (Const x) = pure (x, Simple Keep)
+evalPure evalPrim (Prim prim) = second Complex <$> evalPrim prim
+evalPure evalPrim (Ap left right) =
     (\(f, df) (x, dx) -> (f x, case (df, dx) of
         (Simple Keep, Simple Keep) -> Simple Keep
         (Simple Keep, Simple (Set nx)) -> Simple $ Set $ f nx
@@ -214,20 +208,18 @@ eval evalPrim (Ap left right) =
         (Complex df, Simple (Set nx)) -> Simple $ Set $ apply df f nx
         (Complex df, Complex dx) | isKeep dx -> Complex $ df x
         (Complex df, Complex dx) -> Simple $ Set (apply df f $ apply dx x)
-    )) <$> eval evalPrim left <*> eval evalPrim right
+    )) <$> evalPure evalPrim left <*> evalPure evalPrim right
 
--- | Like 'eval', but requires @a@ to satisfy the constraint 'HasDelta', and
--- returns a 'Delta' instead of a 'PureDelta'.
-evalToDelta :: (Applicative f, HasDelta a)
-    => (forall r b. (HasDelta b) => PrimSignal r b -> f (b, Delta b))
-    -> Signal r a -> f (a, Delta a)
-evalToDelta evalPrim sig = second toDelta <$> eval evalPrim sig
+-- | Given an evaluator for 'PrimSignal', produces an evaluator for 'Signal'.
+eval :: (Applicative f) => Evaluator PrimSignal f -> Evaluator (Signal r) f
+eval evalPrim sig = second toDelta <$> evalPure evalPrim sig
 
 -- | Specifies a time before which all signal data is deleted.
 type Window = Time
 
 -- | Converts a 'Signal' into a 'PrimSignal'.
-primify :: (HasDelta a) => Signal r a -> PrimSignal r a
+primify :: (HasDelta a) => Signal r a -> PrimSignal a
+primify (Prim prim) = prim
 primify sig = Signal $ unsafePerformIO $ do
     state <- newIORef SignalState {
         signalData = Map.empty,
@@ -235,7 +227,7 @@ primify sig = Signal $ unsafePerformIO $ do
         signalProps = [] }
     return SignalInfo {
         signalState = state,
-        signalEval = (`evalToDelta` sig) }
+        signalDef = (`eval` sig) }
 
 -- | Insures the given signal will be only be evaluated once per update.
 cache :: (HasDelta a) => Signal r a -> Signal r a
@@ -319,5 +311,5 @@ output sig = ReactT $ do
             curWindow <- window outputs
             (last, delta) <- eval (evalPrim curWindow from time) sig
             writeIORef ref time
-            return $ return (toDelta delta, apply delta last)
+            return $ return (delta, apply delta last)
     return (cur, look)
