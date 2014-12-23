@@ -12,7 +12,7 @@ import Control.Applicative
 mapTest :: IO ()
 mapTest = runReactT $ do
     (x, xI) <- input (5 :: Int)
-    let y = dmap (deltaMap (+ 3)) x
+    let y = (+ 3) <$> x
     (yV, yO) <- output y
     lift $ assertEqual "for initial output," 8 yV
     (yD, yV) <- yO
@@ -32,8 +32,8 @@ deferTest = runReactT $ do
     (y, yI) <- input (8 :: Int)
     (z, zI) <- input x
     let a = defer z
-    let b = dmap (deltaMap (* 2)) a
-    let c = dmap (deltaMap (+ 3)) x
+    let b = (* 2) <$> a
+    let c = (+ 3) <$> x
     (bV, bO) <- output b
     (cV, cO) <- output c
     lift $ assertEqual "for initial output," 10 bV
@@ -61,7 +61,7 @@ stressTest = runReactT $ do
     inputs <- mapM input (take 100 $ repeat (1 :: Integer))
     let pyramid xs = case xs of
           (x : y : xs) ->
-            let z = dmap (deltaMap (\(x, y) -> x + y)) $ plex2 x y
+            let z = cache ((+) <$> x <*> y)
             in z : pyramid (y : xs)
           _ -> []
     let [final] = (iterate pyramid $ map fst inputs) !! 99
