@@ -15,7 +15,7 @@ module Terminal.Draw (
     Draw,
     runDraw,
     none,
-    (|%),
+    (|%), (|%|),
     string,
     space,
     hline,
@@ -124,6 +124,10 @@ none = Draw []
 -- the second operation take precedence.
 (|%) :: Draw -> Draw -> Draw
 (|%) (Draw a) (Draw b) = Draw (a ++ b)
+
+-- | Combines two drawing operations assuming overwrite is not possible.
+(|%|) :: Draw -> Draw -> Draw
+(|%|) = (|%)
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw
