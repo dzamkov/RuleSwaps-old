@@ -6,7 +6,6 @@
 {-# LANGUAGE FunctionalDependencies #-}
 module Terminal.Figure.Block (
     Block,
-    SizeSpecifier,
     Dep,
     SBlock,
     blockify,
@@ -22,55 +21,53 @@ import Terminal.Figure.Flow
 -- The @s@ specifies how sizing is performed for the block.
 data Block s
 
--- | The information needed to fully determine the size of a block with sizing
--- type @s@.
-type family SizeSpecifier s
-
 type instance Layout (Block s) = Layout s
-type instance Placement (Block s) = To (SizeSpecifier s) SBlock
+type instance Placement (Block s) = Placement s
+type instance Next (Block s) = SBlock
 
 -- | The sizing type for a block where the width and height are interrelated
 -- and specifying one will determine the other.
 data Dep
 
 type instance Layout Dep = ()
-type instance SizeSpecifier Dep = Either Width Height
+type instance Placement Dep = Either Width Height
 
 -- | The layout type for a block figure with a known size.
 data SBlock
 
 type instance Layout SBlock = (Width, Height)
-type instance Placement SBlock = To Point Static
+type instance Placement SBlock = Point
+type instance Next SBlock = Static
 
 instance HasEmpty SBlock where
     empty = Figure {
         layout = (0, 0),
-        place = \(To _) -> empty }
+        place = const empty }
 instance CanTest SBlock where
     test fig = do
         let (_, height) = layout fig
-        runDrawInline height $ draw $ place fig $ To (0, 0)
+        runDrawInline height $ draw $ place fig (0, 0)
 instance CanTest (Block Dep) where
-    test fig = test $ place fig $ To (Left testWidth)
+    test fig = test $ place fig $ Left testWidth
 
 -- | Converts a figure into a dependently-sized block.
 blockify :: FullColor -> Figure Flow -> Figure (Block Dep)
 blockify back flow = res where
     res = Figure {
         layout = (),
-        place = \(To size) -> withSize size }
-    withSize :: SizeSpecifier Dep -> Figure SBlock
+        place = withSize }
+    withSize :: Placement Dep -> Figure SBlock
     withSize (Left width) = res where
-        pFlow = place flow $ To FlowArea {
+        pFlow = place flow FlowArea {
             width = width,
             indent = 0 }
         (endX, endY) = end $ layout pFlow
         res :: Figure SBlock
         res = Figure {
             layout = (width, endY + 1),
-            place = \(To offset) -> withOffset offset }
+            place = withOffset }
         withOffset (x, y) = res where
-            pDraw = draw $ place pFlow $ To (back, (x, y))
+            pDraw = draw $ place pFlow (back, (x, y))
             endSpace = Draw.space back (x + endX, y + endY) (width - endX)
             res = static (pDraw |% endSpace)
     withSize (Right _) = undefined -- TODO: Math and binary search stuff
@@ -84,7 +81,7 @@ class CanEnclose s n | s -> n where
     -- outer block.
     transEnclose :: s -> (Width, Height)
         -> (Layout s -> Layout n,
-            SizeSpecifier n -> SizeSpecifier s)
+            Placement n -> Placement s)
 
 instance CanEnclose Dep Dep where
     transEnclose _ (width, height) = (f, g) where
@@ -99,18 +96,18 @@ box appr block = res where
     (f, g) = transEnclose (undefined :: s) (2, 2)
     res = Figure {
         layout = f $ layout block,
-        place = \(To size) -> withSize size }
+        place = withSize }
     withSize size = res where
-        sBlock = place block $ To (g size)
+        sBlock = place block (g size)
         (iWidth, iHeight) = layout sBlock
         width = iWidth + 2
         height = iHeight + 2
         res :: Figure SBlock
         res = Figure {
             layout = (width, height),
-            place = \(To offset) -> withOffset offset }
+            place = withOffset }
         withOffset (x, y) = res where
-            sDraw = draw $ place sBlock $ To (x + 1, y + 1)
+            sDraw = draw $ place sBlock (x + 1, y + 1)
             res = static (sDraw |%
                 Draw.string appr (x, y) "+" |%
                 Draw.hline appr '-' (x + 1, y) (width - 2) |%

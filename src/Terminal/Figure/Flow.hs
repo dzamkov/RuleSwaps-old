@@ -22,7 +22,8 @@ import Terminal.Figure.Core
 data Flow
 
 type instance Layout Flow = FlowLayout
-type instance Placement Flow = To FlowArea PFlow
+type instance Placement Flow = FlowArea
+type instance Next Flow = PFlow
 
 -- | The layout information provided by a flow.
 data FlowLayout = FlowLayout {
@@ -50,7 +51,8 @@ data FlowArea = FlowArea {
 data PFlow
 
 type instance Layout PFlow = PFlowLayout
-type instance Placement PFlow = To (FullColor, Point) Static
+type instance Placement PFlow = (FullColor, Point)
+type instance Next PFlow = Static
 
 -- | The layout information provided by a flow with known 'FlowArea'.
 data PFlowLayout = PFlowLayout {
@@ -62,23 +64,23 @@ data PFlowLayout = PFlowLayout {
 instance HasEmpty PFlow where
     empty = Figure {
         layout = PFlowLayout (0, 0),
-        place = \(To _) -> empty }
+        place = const empty }
 instance HasEmpty Flow where
     empty = Figure {
         layout = FlowLayout {
             minWidth = 0,
             maxWidth = 0 },
-        place = \(To _) -> empty }
+        place = const empty }
 instance CanTest Flow where
     test fig = do
         let area = FlowArea {
             width = testWidth,
             indent = 0 }
-        let figP = place fig $ To area
+        let figP = place fig area
         let back = (Dull, Magenta)
         let context = (back, (0, 0))
         let (_, endY) = end $ layout figP
-        runDrawInline (endY + 1) $ draw $ place figP $ To context
+        runDrawInline (endY + 1) $ draw $ place figP context
 
 -- | A flowed figure for text that will not be broken unless necessary.
 tightText :: FullColor -> String -> Figure Flow
@@ -89,7 +91,7 @@ tightText fore text = res where
         layout = FlowLayout {
             minWidth = size,
             maxWidth = size },
-        place = \(To area) -> withArea area }
+        place = withArea }
     withArea (FlowArea { .. }) = res where
         rem = width - indent
         (end, inline) = case (size <= rem, size <= width) of
@@ -101,7 +103,7 @@ tightText fore text = res where
         res :: Figure PFlow
         res = Figure {
             layout = PFlowLayout end,
-            place = \(To context) -> withContext context }
+            place = withContext }
         withContext (back, (x, y)) = static draw where
             appr = (back, fore)
             cont accum y text =
@@ -125,7 +127,7 @@ space size = res where
         layout = FlowLayout {
             minWidth = 0,
             maxWidth = size },
-        place = \(To area) -> withArea area }
+        place = withArea }
     withArea (FlowArea { .. }) = res where
         (end, len) = case () of
             _ | indent == 0 -> ((0, 0), 0)
@@ -134,7 +136,7 @@ space size = res where
         res :: Figure PFlow
         res = Figure {
             layout = PFlowLayout end,
-            place = \(To context) -> withContext context }
+            place = withContext }
         withContext (back, (x, y)) = static $ case len of
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
@@ -149,21 +151,21 @@ space size = res where
         layout = FlowLayout {
             maxWidth = maxWidth xL + maxWidth yL,
             minWidth = max (minWidth xL) (minWidth yL) },
-        place = \(To area) -> withArea area }
+        place = withArea }
     withArea xArea@(FlowArea { .. }) = res where
-        xP = place x $ To xArea
+        xP = place x xArea
         (xEndX, xEndY) = end $ layout xP
         yArea = FlowArea { width = width, indent = xEndX }
-        yP = place y $ To yArea
+        yP = place y yArea
         (yEndX, yEndY) = end $ layout yP
         xyEnd = (yEndX, xEndY + yEndY)
         res :: Figure PFlow
         res = Figure {
             layout = PFlowLayout xyEnd,
-            place = \(To context) -> withContext context }
+            place = withContext }
         withContext (back, (x, y)) = static
-            (draw (place xP $ To (back, (x, y))) |%
-            draw (place yP $ To (back, (x, y + xEndY))))
+            (draw (place xP (back, (x, y))) |%|
+            draw (place yP (back, (x, y + xEndY))))
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow
