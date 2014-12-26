@@ -1,6 +1,7 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Terminal.Figure.Flow (
     Flow,
     FlowLayout (..),
@@ -9,13 +10,15 @@ module Terminal.Figure.Flow (
     PFlowLayout (..),
     tightText,
     space,
-    (+++),
+    CanConcat (..),
     text
 ) where
 
+import Stride hiding (end)
 import Terminal.Draw hiding (space)
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
+import Control.Applicative hiding (empty)
 
 -- | The layout type for a flowed figure, one which is linear and horizontal
 -- with the ability to be broken up into parts, much like text.
@@ -141,31 +144,40 @@ space size = res where
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
 
--- | Concatenates flowed figures.
-(+++) :: Figure Flow -> Figure Flow -> Figure Flow
-(+++) x y | maxWidth (layout x) == 0 = y
-(+++) x y | maxWidth (layout y) == 0 = x
-(+++) x y = res where
-    (xL, yL) = (layout x, layout y)
-    res = Figure {
-        layout = FlowLayout {
-            maxWidth = maxWidth xL + maxWidth yL,
-            minWidth = max (minWidth xL) (minWidth yL) },
-        place = withArea }
-    withArea xArea@(FlowArea { .. }) = res where
-        xP = place x xArea
-        (xEndX, xEndY) = end $ layout xP
-        yArea = FlowArea { width = width, indent = xEndX }
-        yP = place y yArea
-        (yEndX, yEndY) = end $ layout yP
-        xyEnd = (yEndX, xEndY + yEndY)
-        res :: Figure PFlow
-        res = Figure {
-            layout = PFlowLayout xyEnd,
-            place = withContext }
-        withContext (back, (x, y)) = static
-            (draw (place xP (back, (x, y))) |%|
-            draw (place yP (back, (x, y + xEndY))))
+-- | @a@ is a type similar to a flowed figure which allows concatenation.
+class CanConcat a where
+
+    -- | Concatenates flowed figures.
+    (+++) :: a -> a -> a
+
+instance CanConcat (Stride (Figure Flow)) where
+    (+++) a b = res where
+        (aL, bL) = (dlayout a, dlayout b)
+        abL = (\aL bL -> FlowLayout {
+            maxWidth = maxWidth aL + maxWidth bL,
+            minWidth = max (minWidth aL) (minWidth bL) })
+            <$> aL <*> bL
+        res = dfigure abL withArea
+        withArea aArea@FlowArea { width = width } = res where
+            aP = dplace a $ pure aArea
+            aEnd = end <$> dlayout aP
+            (aEndX, aEndY) = dbreak2 aEnd
+            bArea = (\aEndX -> FlowArea {
+                width = width,
+                indent = aEndX }) <$> aEndX
+            bP = dplace b bArea
+            bEnd = end <$> dlayout bP
+            (bEndX, bEndY) = dbreak2 bEnd
+            abEnd = dcheck $ dplex2 bEndX ((+) <$> aEndY <*> bEndY)
+            res = dfigure (PFlowLayout <$> abEnd) withContext
+            withContext (back, (x, y)) = res where
+                aD = dplace aP $ pure (back, (x, y))
+                bD = dplace bP $ (\e -> (back, (x, y + e))) <$> aEndY
+                res = dstatic $ dplus (ddraw aD) (ddraw bD)
+instance CanConcat (Figure Flow) where
+    (+++) x y | maxWidth (layout x) == 0 = y
+    (+++) x y | maxWidth (layout y) == 0 = x
+    (+++) x y = start (stay x +++ stay y)
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow

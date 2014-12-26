@@ -18,7 +18,12 @@ module Stride (
     apply,
     Evaluator,
     Deltor (..),
-    dcheck
+    dcheck,
+    dfun,
+    dfst,
+    dsnd,
+    dplex2,
+    dbreak2
 ) where
 
 import Control.Monad.Identity (Identity (..))
@@ -168,3 +173,28 @@ dcheck source = deltor (\eval -> check <$> eval source) where
     check (Stride x y) | x == y = Stay x
     check (Complex c) | start c == end c = Stay (start c)
     check x = x
+
+-- | Converts a function to a stride into a stride of a function.
+dfun :: (a -> Stride b) -> Stride (a -> b)
+dfun = Complex
+
+-- | Extracts the first element from a deltor of a tuple.
+dfst :: (Deltor f) => f (a, b) -> f a
+dfst source = deltor (\eval -> extract <$> eval source) where
+    extract (Complex (dx, _)) = dx
+    extract s = fst <$> s
+
+-- | Extracts the second element from a deltor of a tuple.
+dsnd :: (Deltor f) => f (a, b) -> f b
+dsnd source = deltor (\eval -> extract <$> eval source) where
+    extract (Complex (_, dy)) = dy
+    extract s = snd <$> s
+
+-- | Constructs a deltor for a tuple.
+dplex2 :: (Deltor f) => f a -> f b -> f (a, b)
+dplex2 x y = deltor (\eval -> cons <$> eval x <*> eval y) where
+    cons x y = Complex (x, y)
+
+-- | Extracts the elements from a deltor of a tuple.
+dbreak2 :: (Deltor f) => f (a, b) -> (f a, f b)
+dbreak2 source = (dfst source, dsnd source)

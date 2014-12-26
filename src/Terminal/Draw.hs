@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 module Terminal.Draw (
     X, Y,
     Point,
@@ -16,6 +18,7 @@ module Terminal.Draw (
     runDraw,
     none,
     (|%), (|%|),
+    dplus,
     string,
     space,
     hline,
@@ -24,9 +27,11 @@ module Terminal.Draw (
     runDrawInline
 ) where
 
+import Stride
 import System.Console.ANSI
 import Data.Maybe (catMaybes, mapMaybe)
 import Control.Monad
+import Control.Applicative
 
 -- | Describes the X offset of a point from the left edge of the terminal.
 type X = Int
@@ -111,6 +116,13 @@ runDrawOp (Space back (x, y) wid) (oldPos, (oldB, oldF)) = do
 
 -- | A procedure which draws something to the terminal.
 newtype Draw = Draw [DrawOp]
+data SDraw = SDraw Draw Draw
+type instance Complex Draw = SDraw
+instance IsStride SDraw where
+    glue (SDraw i x) (SDraw _ y) = SDraw i (x |% y)
+instance StrideRel SDraw Draw where
+    start (SDraw i _) = i
+    end (SDraw i a) = i |% a
 
 -- | Performs a drawing procedure on the current terminal.
 runDraw :: Draw -> State -> IO State
@@ -128,6 +140,16 @@ none = Draw []
 -- | Combines two drawing operations assuming overwrite is not possible.
 (|%|) :: Draw -> Draw -> Draw
 (|%|) = (|%)
+
+-- | Combines two drawing operations within the context of a deltor, assuming
+-- overwrite is not possible.
+dplus :: (Deltor f) => f Draw -> f Draw -> f Draw
+dplus x y = deltor (\eval -> combine <$> eval x <*> eval y) where
+    combine (Stride xs xe) (Stay y) = Complex $ SDraw (xs |%| y) xe
+    combine (Stay x) (Stride ys ye) = Complex $ SDraw (ys |%| x) ye
+    combine (Complex (SDraw xs xd)) (Complex (SDraw ys yd)) =
+        Complex $ SDraw (xs |%| ys) (xd |%| yd)
+    combine x y = (|%|) <$> x <*> y
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw

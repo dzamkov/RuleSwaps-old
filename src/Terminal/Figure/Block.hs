@@ -12,10 +12,12 @@ module Terminal.Figure.Block (
     box
 ) where
 
+import Stride hiding (end)
 import Terminal.Draw
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
 import Terminal.Figure.Flow
+import Control.Applicative hiding (empty)
 
 -- | The layot type for a block figure, one which takes up a rectangular area.
 -- The @s@ specifies how sizing is performed for the block.
@@ -50,27 +52,33 @@ instance CanTest SBlock where
 instance CanTest (Block Dep) where
     test fig = test $ place fig $ Left testWidth
 
--- | Converts a figure into a dependently-sized block.
-blockify :: FullColor -> Figure Flow -> Figure (Block Dep)
-blockify back flow = res where
-    res = Figure {
-        layout = (),
-        place = withSize }
-    withSize :: Placement Dep -> Figure SBlock
-    withSize (Left width) = res where
-        pFlow = place flow FlowArea {
-            width = width,
-            indent = 0 }
-        (endX, endY) = end $ layout pFlow
-        res :: Figure SBlock
-        res = Figure {
-            layout = (width, endY + 1),
-            place = withOffset }
-        withOffset (x, y) = res where
-            pDraw = draw $ place pFlow (back, (x, y))
-            endSpace = Draw.space back (x + endX, y + endY) (width - endX)
-            res = static (pDraw |% endSpace)
-    withSize (Right _) = undefined -- TODO: Math and binary search stuff
+-- | @a@ is a type similar to a flowed figure which can be converted into
+-- a dependently-sized block.
+class CanBlockify a b | a -> b where
+
+    -- | Converts a flowed figure into a dependently-sized block using the
+    -- given back color.
+    blockify :: FullColor -> a -> b
+
+instance CanBlockify (Stride (Figure Flow)) (Stride (Figure (Block Dep))) where
+    blockify back flow = res where
+        res = dfigure (pure ()) withSize
+        withSize (Left width) = res where
+            flowP = dplace flow $ pure FlowArea {
+                width = width,
+                indent = 0 }
+            end' = end <$> dlayout flowP
+            endY = dsnd end'
+            size = dcheck $ dplex2 (pure width) ((+ 1) <$> endY)
+            res = dfigure size (withOffset width flowP end')
+        withSize (Right _) = undefined -- TODO: Math and binary search
+        withOffset width flowP end (x, y) = res where
+            flowD = ddraw $ dplace flowP $ pure (back, (x, y))
+            endSpace = (\(ex, ey) -> Draw.space back
+                (x + ex, y + ey) (width - ex)) <$> end
+            res = dstatic $ dplus flowD endSpace
+instance CanBlockify (Figure Flow) (Figure (Block Dep)) where
+    blockify back flow = start $ blockify back $ stay flow
 
 -- | Blocks of sizing type @s@ can be enclosed by constant- width and height
 -- borders resulting in blocks of sizing type @n@.
