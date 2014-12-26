@@ -11,4 +11,4 @@ chat = user "dr420scopes" +++ (text (Dull, White) $ take 360 $ cycle
 chatbox = box ((Dull, Blue), (Vivid, White)) $ blockify (Dull, Magenta) chat
 
 main :: IO ()
-main = test chatbox
+main = test (setWidth 22 chatbox)
