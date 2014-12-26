@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Terminal.Figure.Block (
     Block,
     Dep,
@@ -53,7 +54,7 @@ instance CanTest (Block Dep) where
     test fig = test $ place fig $ Left testWidth
 
 -- | @a@ is a type similar to a flowed figure which can be converted into
--- a dependently-sized block.
+-- a dependently-sized block of type @b@.
 class CanBlockify a b | a -> b where
 
     -- | Converts a flowed figure into a dependently-sized block using the
@@ -97,31 +98,52 @@ instance CanEnclose Dep Dep where
         g (Left w) = Left (w - width)
         g (Right h) = Right (h - height)
 
--- | Encloses a block with a graphical box
-box :: forall s n. (CanEnclose s n)
-    => Appearance -> Figure (Block s) -> Figure (Block n)
-box appr block = res where
-    (f, g) = transEnclose (undefined :: s) (2, 2)
-    res = Figure {
-        layout = f $ layout block,
-        place = withSize }
-    withSize size = res where
-        sBlock = place block (g size)
-        (iWidth, iHeight) = layout sBlock
-        width = iWidth + 2
-        height = iHeight + 2
-        res :: Figure SBlock
-        res = Figure {
-            layout = (width, height),
-            place = withOffset }
-        withOffset (x, y) = res where
-            sDraw = draw $ place sBlock (x + 1, y + 1)
-            res = static (sDraw |%
-                Draw.string appr (x, y) "+" |%
-                Draw.hline appr '-' (x + 1, y) (width - 2) |%
-                Draw.string appr (x + width - 1, y) "+" |%
-                Draw.vline appr '|' (x + width - 1, y + 1) (height - 2) |%
-                Draw.string appr (x + width - 1, y + height - 1) "+" |%
-                Draw.hline appr '-' (x + 1, y + height - 1) (width - 2) |%
-                Draw.string appr (x, y + height - 1) "+" |%
-                Draw.vline appr '|' (x, y + 1) (height - 2))
+-- | Describes a border that can be applied to a block. The size of the border
+-- in each direction (left, top, right, bottom) is given, along with a function
+-- which draws the border given the size and placement of full block (including
+-- border).
+type Border =
+    (Width, Height, Width, Height,
+    (Width, Height) -> Point -> Draw)
+
+-- | @a@ is a type similar to a block to which a border can be applied.
+class CanBorder a where
+
+    -- | Applies a border to a block.
+    withBorder :: Border -> a -> a
+
+instance CanEnclose s s => CanBorder (Stride (Figure (Block s))) where
+    withBorder border block = res where
+        (left, top, right, bottom, drawBorder) = border
+        padWidth = left + right
+        padHeight = top + bottom
+        (f, g) = transEnclose (undefined :: s) (padWidth, padHeight)
+        res = dfigure (f <$> dlayout block) withSize
+        withSize size = res where
+            blockP = dplace block $ pure (g size)
+            innerSize = dlayout blockP
+            fullSize = (\(w, h) -> (w + padWidth, h + padHeight)) <$> innerSize
+            res = dfigure fullSize withOffset
+            withOffset (x, y) = res where
+                blockD = ddraw $ dplace blockP $ pure (x + 1, y + 1)
+                borderD = (\size -> drawBorder size (x, y)) <$> fullSize
+                res = dstatic $ dplus blockD borderD
+instance CanEnclose s s => CanBorder (Figure (Block s)) where
+    withBorder border block = start $ withBorder border $ stay block
+
+-- | A 1-character-thick line border with the given appearance.
+lineBorder :: Appearance -> Border
+lineBorder appr = (1, 1, 1, 1, draw) where
+    draw (width, height) (x, y) = foldl1 (|%|) [
+        Draw.string appr (x, y) "+",
+        Draw.hline appr '-' (x + 1, y) (width - 2),
+        Draw.string appr (x + width - 1, y) "+",
+        Draw.vline appr '|' (x + width - 1, y + 1) (height - 2),
+        Draw.string appr (x + width - 1, y + height - 1) "+",
+        Draw.hline appr '-' (x + 1, y + height - 1) (width - 2),
+        Draw.string appr (x, y + height - 1) "+",
+        Draw.vline appr '|' (x, y + 1) (height - 2)]
+
+-- | Encloses a block with a graphical box of the given appearance.
+box :: (CanBorder a) => Appearance -> a -> a
+box = withBorder . lineBorder
