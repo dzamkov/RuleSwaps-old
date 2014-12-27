@@ -23,6 +23,7 @@ module Terminal.Draw (
     space,
     hline,
     vline,
+    fill,
     clip,
     runDrawInline
 ) where
@@ -173,6 +174,13 @@ vline _ _ _ 0 = none
 vline appr ch (x, y) height = Draw $
     map (\offset -> String appr (x, y + offset) [ch])
     [0 .. height - 1]
+
+-- | Fills an area with colored space.
+fill :: FullColor -> Point -> Width -> Height -> Draw
+fill _ _ 0 _ = none
+fill _ _ _ 0 = none
+fill back (x, y) width height = space back (x, y) width |%|
+    fill back (x, y + 1) width (height - 1)
 
 -- | Restricts a draw operation to the given rectangular region.
 clip :: Point -> Width -> Height -> Draw -> Draw

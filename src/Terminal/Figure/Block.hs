@@ -20,7 +20,10 @@ module Terminal.Figure.Block (
     lineBorder,
     box,
     setWidth,
-    setHeight
+    setHeight,
+    hcenter,
+    vcenter,
+    center
 ) where
 
 import Stride hiding (end)
@@ -233,3 +236,66 @@ setWidth width = setSize (H width)
 -- | Sets the height of a block.
 setHeight :: (CanSetSize V a b) => Height -> a -> b
 setHeight height = setSize (V height)
+
+-- | @a@ is a type similar to a block which can be centered about the axis
+-- specified by @p@.
+class CanCenter p a b | p a -> b where
+
+    -- | Centers a block along the given axis, using the given color for
+    -- filler.
+    centerAxis :: p -> FullColor -> a -> b
+
+instance CanCenter H
+    (Stride (Figure (Block (Ind Fix a))))
+    (Stride (Figure (Block (Ind Vary a)))) where
+        centerAxis _ back block = res where
+            layout = (\(_, v) -> ((), v)) <$> dlayout block
+            res = dfigure layout withPlacement
+            withPlacement (fullWidth, v) = res where
+                blockP = dplace block $ pure ((), v)
+                innerSize = dlayout blockP
+                fullSize = (\(_, ih) -> (fullWidth, ih)) <$> innerSize
+                res = dfigure fullSize withOffset
+                withOffset (x, y) = res where
+                    sx = (\(iw, _) -> (fullWidth - iw) `div` 2) <$> innerSize
+                    blockD = ddraw $ dplace blockP $ dplex2 sx (pure y)
+                    filler = (\sx (iw, h) ->
+                        Draw.fill back (x, y) sx h |%|
+                        Draw.fill back (sx + iw, y) (fullWidth - sx - iw) h)
+                        <$> sx <*> innerSize
+                    res = dstatic (dplus blockD filler)
+instance CanCenter V
+    (Stride (Figure (Block (Ind a Fix))))
+    (Stride (Figure (Block (Ind a Vary)))) where
+        centerAxis _ back block = res where
+            layout = (\(h, _) -> (h, ())) <$> dlayout block
+            res = dfigure layout withPlacement
+            withPlacement (h, fullHeight) = res where
+                blockP = dplace block $ pure (h, ())
+                innerSize = dlayout blockP
+                fullSize = (\(iw, _) -> (iw, fullHeight)) <$> innerSize
+                res = dfigure fullSize withOffset
+                withOffset (x, y) = res where
+                    sy = (\(_, ih) -> (fullHeight - ih) `div` 2) <$> innerSize
+                    blockD = ddraw $ dplace blockP $ dplex2 (pure x) sy
+                    filler = (\sy (w, ih) ->
+                        Draw.fill back (x, y) w sy |%|
+                        Draw.fill back (x, sy + ih) w (fullHeight - sy - ih))
+                        <$> sy <*> innerSize
+                    res = dstatic (dplus blockD filler)
+instance CanCenter p (Stride (Figure (Block a))) (Stride (Figure (Block b)))
+    => CanCenter p (Figure (Block a)) (Figure (Block b)) where
+        centerAxis x back block = start $ centerAxis x back $ stay block
+
+-- | Centers a block along the horizontal axis, using the given color for
+-- filler.
+hcenter :: (CanCenter H a b) => FullColor -> a -> b
+hcenter = centerAxis (undefined :: H)
+
+-- | Centers a block along the vertical axis, using the given color for filler.
+vcenter :: (CanCenter V a b) => FullColor -> a -> b
+vcenter = centerAxis (undefined :: V)
+
+-- | Centers a block along both axes, using the given color for filler.
+center :: (CanCenter H a b, CanCenter V b c) => FullColor -> a -> c
+center back = vcenter back . hcenter back
