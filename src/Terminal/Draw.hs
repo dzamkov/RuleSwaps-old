@@ -14,6 +14,7 @@ module Terminal.Draw (
     changeAppearance,
     setAppearance,
     defaultAppearance,
+    changeState,
     Draw,
     runDraw,
     none,
@@ -44,12 +45,13 @@ type Y = Int
 type Point = (X, Y)
 
 -- | Sets the position of the cursor given the current position.
-changePosition :: Point -> Point -> IO ()
-changePosition (oldX, oldY) (newX, newY) = do
+changePosition :: Width -> Point -> Point -> IO ()
+changePosition width (oldX', oldY') (newX, newY) = do
+    let oldX = oldX' `rem` width
+    let oldY = oldY' + (oldX' `div` width)
     when (newY < oldY) $ cursorUp (oldY - newY)
     when (newY > oldY) $ cursorDown (newY - oldY)
-    when (newX < oldX) $ cursorBackward (oldX - newX)
-    when (newX > oldX) $ cursorForward (newX - oldX)
+    when (newX /= oldX) $ setCursorColumn newX
 
 -- | Describes the width of a terminal area.
 type Width = Int
@@ -89,34 +91,36 @@ setAppearance ((bi, bc), (fi, fc)) =
 defaultAppearance :: Appearance
 defaultAppearance = ((Dull, Black), (Dull, White))
 
--- | Describes the state of the terminal cursor.
-type State = (Point, Appearance)
+-- | Describes the state of the terminal cursor, along with the width of the
+-- terminal.
+type State = (Width, Point, Appearance)
 
 -- | Sets the state of the terminal cursor given the current state.
 changeState :: State -> State -> IO ()
-changeState (oldPos, oldAppr) (newPos, newAppr) = do
-    changePosition oldPos newPos
+changeState (_, oldPos, oldAppr) (width, newPos, newAppr) = do
+    changePosition width oldPos newPos
     changeAppearance oldAppr newAppr
 
 -- | A primitive operation which draws something to the terminal.
 data DrawOp
     = String Appearance Point String
     | Space FullColor Point Width
+    deriving (Eq, Ord, Show)
 
 -- | Performs a drawing operation on the current terminal.
 runDrawOp :: DrawOp -> State -> IO State
-runDrawOp (String appr (x, y) str) st = do
-    changeState st ((x, y), appr)
+runDrawOp (String appr (x, y) str) st@(width, _, _) = do
+    changeState st (width, (x, y), appr)
     putStr str
-    return ((x + length str, y), appr)
-runDrawOp (Space back (x, y) wid) (oldPos, (oldB, oldF)) = do
-    changePosition oldPos (x, y)
+    return (width, (x + length str, y), appr)
+runDrawOp (Space back (x, y) wid) (width, oldPos, (oldB, oldF)) = do
+    changePosition width oldPos (x, y)
     changeBackground oldB back
     putStr $ replicate wid ' '
-    return ((x + wid, y), (back, oldF))
+    return (width, (x + wid, y), (back, oldF))
 
 -- | A procedure which draws something to the terminal.
-newtype Draw = Draw [DrawOp]
+newtype Draw = Draw [DrawOp] deriving (Eq, Ord, Show)
 data SDraw = SDraw Draw Draw
 type instance Complex Draw = SDraw
 instance IsStride SDraw where
@@ -206,5 +210,5 @@ runDrawInline height draw = do
     setAppearance defaultAppearance
     replicateM_ height $ putStrLn ""
     cursorUp height
-    st <- runDraw draw ((0, 0), defaultAppearance)
-    changeState st ((0, height), defaultAppearance)
+    st <- runDraw draw (maxBound, (0, 0), defaultAppearance)
+    changeState st (maxBound, (0, height), defaultAppearance)

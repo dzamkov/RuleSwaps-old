@@ -14,7 +14,8 @@ executable rule-swaps
                   bytestring,
                   entropy,
                   text,
-                  ansi-terminal
+                  ansi-terminal,
+                  terminal-size
   if os(windows)
     extra-libraries:  msvcrt
 test-suite test
