@@ -8,6 +8,7 @@ executable rule-swaps
   main-is:		  Main.hs
   build-depends:  base,
                   mtl,
+                  transformers,
                   containers,
                   binary,
                   cryptohash,
