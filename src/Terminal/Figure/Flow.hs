@@ -10,7 +10,7 @@ module Terminal.Figure.Flow (
     PFlowLayout (..),
     tightText,
     space,
-    CanConcat (..),
+    (+++),
     text
 ) where
 
@@ -144,14 +144,9 @@ space size = res where
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
 
--- | @a@ is a type similar to a flowed figure which allows concatenation.
-class CanConcat a where
-
-    -- | Concatenates flowed figures.
-    (+++) :: a -> a -> a
-
-instance CanConcat (Stride (Figure Flow)) where
-    (+++) a b = res where
+(+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow
+(+++) a b = compose (\eval -> concat' <$> eval a <*> eval b) where
+    concat' a b = res where
         (aL, bL) = (dlayout a, dlayout b)
         abL = (\aL bL -> FlowLayout {
             maxWidth = maxWidth aL + maxWidth bL,
@@ -174,10 +169,6 @@ instance CanConcat (Stride (Figure Flow)) where
                 aD = dplace aP $ pure (back, (x, y))
                 bD = dplace bP $ (\e -> (back, (x, y + e))) <$> aEndY
                 res = dstatic $ dplus (ddraw aD) (ddraw bD)
-instance CanConcat (Figure Flow) where
-    (+++) x y | maxWidth (layout x) == 0 = y
-    (+++) x y | maxWidth (layout y) == 0 = x
-    (+++) x y = start (stay x +++ stay y)
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow

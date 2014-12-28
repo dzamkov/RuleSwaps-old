@@ -17,6 +17,8 @@ module Terminal.Figure.Core (
     draw,
     dstatic,
     ddraw,
+    FigureLike (..),
+    generalize,
     HasEmpty (..),
     CanTest (..),
     testWidth,
@@ -25,6 +27,7 @@ module Terminal.Figure.Core (
 
 import Stride
 import Terminal.Draw
+import Control.Monad.Identity
 import Control.Applicative
 
 -- | Contains known layout information for a figure with layout type @a@. This
@@ -115,6 +118,22 @@ dstatic draw = deltor (\eval -> cons <$> eval draw) where
 -- deltor.
 ddraw :: (Deltor f) => f (Figure Static) -> f Draw
 ddraw = dlayout
+
+-- | @f@ is a type, of kind @* -> *@, which behaves like a figure, allowing
+-- composition and decoration through the usual methods for figures.
+class FigureLike f where
+
+    -- | Produces a figure-like from a composition of existing figure-likes.
+    compose :: (forall g. (Applicative g)
+        => (forall a. f a -> g (Stride (Figure a)))
+        -> g (Stride (Figure b))) -> f b
+
+instance FigureLike Figure where
+    compose inner = start $ runIdentity $ inner (Identity . stay)
+
+-- | Converts a figure into a figure-like.
+generalize :: (FigureLike f) => Figure a -> f a
+generalize fig = compose (\_ -> pure $ stay fig)
 
 -- | The layout type @a@ allows for empty figures which take up no space and
 -- involves no drawing.

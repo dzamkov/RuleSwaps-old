@@ -105,16 +105,11 @@ instance CanTest (Block (Ind Fix Vary)) where
 instance CanTest (Block (Ind Vary Vary)) where
     test fig = test $ place fig (testWidth, testHeight)
 
--- | @a@ is a type similar to a flowed figure which can be converted into
--- a dependently-sized block of type @b@.
-class CanBlockify a b | a -> b where
-
-    -- | Converts a flowed figure into a dependently-sized block using the
-    -- given back color.
-    blockify :: FullColor -> a -> b
-
-instance CanBlockify (Stride (Figure Flow)) (Stride (Figure (Block Dep))) where
-    blockify back flow = res where
+-- | Converts a flowed figure into a dependently-sized block with the given
+-- back color.
+blockify :: (FigureLike f) => FullColor -> f Flow -> f (Block Dep)
+blockify back flow = compose (\eval -> blockify' <$> eval flow) where
+    blockify' flow = res where
         res = dfigure (pure ()) withSize
         withSize (Left width) = res where
             flowP = dplace flow $ pure FlowArea {
@@ -130,8 +125,6 @@ instance CanBlockify (Stride (Figure Flow)) (Stride (Figure (Block Dep))) where
             endSpace = (\(ex, ey) -> Draw.space back
                 (x + ex, y + ey) (width - ex)) <$> end
             res = dstatic $ dplus flowD endSpace
-instance CanBlockify (Figure Flow) (Figure (Block Dep)) where
-    blockify back flow = start $ blockify back $ stay flow
 
 -- | Blocks of sizing type @s@ can be enclosed by constant- width and height
 -- borders resulting in blocks of sizing type @n@.
@@ -158,14 +151,11 @@ type Border =
     (Width, Height, Width, Height,
     (Width, Height) -> Point -> Draw)
 
--- | @a@ is a type similar to a block to which a border can be applied.
-class CanBorder a where
-
-    -- | Applies a border to a block.
-    withBorder :: Border -> a -> a
-
-instance CanEnclose s s => CanBorder (Stride (Figure (Block s))) where
-    withBorder border block = res where
+-- | Applies a border to a block.
+withBorder :: forall s n f. (FigureLike f, CanEnclose s n)
+    => Border -> f (Block s) -> f (Block n)
+withBorder border block = compose (\eval -> withBorder' <$> eval block) where
+    withBorder' block = res where
         (left, top, right, bottom, drawBorder) = border
         padWidth = left + right
         padHeight = top + bottom
@@ -180,8 +170,6 @@ instance CanEnclose s s => CanBorder (Stride (Figure (Block s))) where
                 blockD = ddraw $ dplace blockP $ pure (x + 1, y + 1)
                 borderD = (\size -> drawBorder size (x, y)) <$> fullSize
                 res = dstatic $ dplus blockD borderD
-instance CanEnclose s s => CanBorder (Figure (Block s)) where
-    withBorder border block = start $ withBorder border $ stay block
 
 -- | A 1-character-thick line border with the given appearance.
 lineBorder :: Appearance -> Border
@@ -197,15 +185,16 @@ lineBorder appr = (1, 1, 1, 1, draw) where
         Draw.vline appr '|' (x, y + 1) (height - 2)]
 
 -- | Encloses a block with a graphical box of the given appearance.
-box :: (CanBorder a) => Appearance -> a -> a
+box :: (FigureLike f, CanEnclose s n) => Appearance
+    -> f (Block s) -> f (Block n)
 box = withBorder . lineBorder
 
--- | @a@ is a type similar to a block for which the size of the axis specified
--- by @p@ can be set, resulting in a block of type @b@.
-class CanSetSize p a b | p a -> b where
+-- | @s@ is a sizing type for a block for which the size of the axis specified
+-- by @p@ can be set, resulting in a block of sizing type @n@.
+class CanSetSize p s n | p s -> n where
 
     -- | Sets the size of an axis of a block.
-    setSize :: p -> a -> b
+    setSize :: (FigureLike f) => p -> f (Block s) -> f (Block n)
 
 -- | @p@ is an axis that can be set to a given size within a dependently-sized
 -- block.
@@ -219,36 +208,32 @@ instance CanDepSetSize H where
     depPlace (H width) = Left width
 instance CanDepSetSize V where
     depPlace (V height) = Right height
-instance CanDepSetSize p => CanSetSize p
-    (Stride (Figure (Block Dep)))
-    (Stride (Figure (Block (Ind Fix Fix)))) where
-        setSize size block = res where
+instance CanDepSetSize p => CanSetSize p Dep (Ind Fix Fix) where
+    setSize size block = compose (\eval -> setSize' <$> eval block) where
+        setSize' block = res where
             blockP = dplace block $ pure $ depPlace size
             res = dfigure (dlayout blockP) $ const blockP
-instance CanSetSize p (Stride (Figure (Block a))) (Stride (Figure (Block b)))
-    => CanSetSize p (Figure (Block a)) (Figure (Block b)) where
-        setSize size block = start $ setSize size $ stay block
 
 -- | Sets the width of a block.
-setWidth :: (CanSetSize H a b) => Width -> a -> b
+setWidth :: (FigureLike f, CanSetSize H s n)
+    => Width -> f (Block s) -> f (Block n)
 setWidth width = setSize (H width)
 
 -- | Sets the height of a block.
-setHeight :: (CanSetSize V a b) => Height -> a -> b
+setHeight :: (FigureLike f, CanSetSize V s n)
+    => Height -> f (Block s) -> f (Block n)
 setHeight height = setSize (V height)
 
--- | @a@ is a type similar to a block which can be centered about the axis
--- specified by @p@.
-class CanCenter p a b | p a -> b where
+-- | @s@ is the sizing type for a block which can be centered about the axis
+-- specified by @p@, resulting in a block of sizing type @n@.
+class CanCenter p s n | p s -> n where
 
-    -- | Centers a block along the given axis, using the given color for
-    -- filler.
-    centerAxis :: p -> FullColor -> a -> b
+    -- | Centers a block along the given axis.
+    centerAxis :: (FigureLike f) => p -> f (Block s) -> f (Block n)
 
-instance CanCenter H
-    (Stride (Figure (Block (Ind Fix a))))
-    (Stride (Figure (Block (Ind Vary a)))) where
-        centerAxis _ back block = res where
+instance CanCenter H (Ind Fix a) (Ind Vary a) where
+    centerAxis _ block = compose (\eval -> centerAxis' <$> eval block) where
+        centerAxis' block = res where
             layout = (\(_, v) -> ((), v)) <$> dlayout block
             res = dfigure layout withPlacement
             withPlacement (fullWidth, v) = res where
@@ -257,17 +242,12 @@ instance CanCenter H
                 fullSize = (\(_, ih) -> (fullWidth, ih)) <$> innerSize
                 res = dfigure fullSize withOffset
                 withOffset (x, y) = res where
-                    sx = (\(iw, _) -> (fullWidth - iw) `div` 2) <$> innerSize
-                    blockD = ddraw $ dplace blockP $ dplex2 sx (pure y)
-                    filler = (\sx (iw, h) ->
-                        Draw.fill back (x, y) sx h |%|
-                        Draw.fill back (sx + iw, y) (fullWidth - sx - iw) h)
-                        <$> sx <*> innerSize
-                    res = dstatic (dplus blockD filler)
-instance CanCenter V
-    (Stride (Figure (Block (Ind a Fix))))
-    (Stride (Figure (Block (Ind a Vary)))) where
-        centerAxis _ back block = res where
+                    sx = (\(iw, _) -> x + (fullWidth - iw) `div` 2)
+                        <$> innerSize
+                    res = dplace blockP $ dplex2 sx (pure y)
+instance CanCenter V (Ind a Fix) (Ind a Vary) where
+    centerAxis _ block = compose (\eval -> centerAxis' <$> eval block) where
+        centerAxis' block = res where
             layout = (\(h, _) -> (h, ())) <$> dlayout block
             res = dfigure layout withPlacement
             withPlacement (h, fullHeight) = res where
@@ -276,26 +256,19 @@ instance CanCenter V
                 fullSize = (\(iw, _) -> (iw, fullHeight)) <$> innerSize
                 res = dfigure fullSize withOffset
                 withOffset (x, y) = res where
-                    sy = (\(_, ih) -> (fullHeight - ih) `div` 2) <$> innerSize
-                    blockD = ddraw $ dplace blockP $ dplex2 (pure x) sy
-                    filler = (\sy (w, ih) ->
-                        Draw.fill back (x, y) w sy |%|
-                        Draw.fill back (x, sy + ih) w (fullHeight - sy - ih))
-                        <$> sy <*> innerSize
-                    res = dstatic (dplus blockD filler)
-instance CanCenter p (Stride (Figure (Block a))) (Stride (Figure (Block b)))
-    => CanCenter p (Figure (Block a)) (Figure (Block b)) where
-        centerAxis x back block = start $ centerAxis x back $ stay block
+                    sy = (\(_, ih) -> y + (fullHeight - ih) `div` 2)
+                        <$> innerSize
+                    res = dplace blockP $ dplex2 (pure x) sy
 
--- | Centers a block along the horizontal axis, using the given color for
--- filler.
-hcenter :: (CanCenter H a b) => FullColor -> a -> b
+-- | Centers a block along the horizontal axis.
+hcenter :: (FigureLike f, CanCenter H s n) => f (Block s) -> f (Block n)
 hcenter = centerAxis (undefined :: H)
 
--- | Centers a block along the vertical axis, using the given color for filler.
-vcenter :: (CanCenter V a b) => FullColor -> a -> b
+-- | Centers a block along the vertical axis.
+vcenter :: (FigureLike f, CanCenter V s n) => f (Block s) -> f (Block n)
 vcenter = centerAxis (undefined :: V)
 
 -- | Centers a block along both axes, using the given color for filler.
-center :: (CanCenter H a b, CanCenter V b c) => FullColor -> a -> c
-center back = vcenter back . hcenter back
+center :: (FigureLike f, CanCenter H s m, CanCenter V m n)
+    => f (Block s) -> f (Block n)
+center = vcenter . hcenter
