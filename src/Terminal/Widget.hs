@@ -2,9 +2,14 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Terminal.Widget (
     Widget (..),
     toWidget,
+    Builder,
+    runBuilder,
+    action,
     runWidget
 ) where
 
@@ -20,7 +25,7 @@ import Data.Maybe (fromJust)
 import Data.Functor.Compose
 import Control.Monad (replicateM_)
 import Control.Monad.Reader (Reader, runReader, ask)
-import Control.Monad.State (State, runState, modify)
+import Control.Monad.State
 import Control.Monad.Trans (lift)
 import Control.Applicative hiding (empty)
 import System.Console.ANSI
@@ -91,6 +96,30 @@ instance Ord k => FigureLike (Widget r k) where
 -- | Converts a figure into a widget.
 toWidget :: (Ord k) => Figure a -> Widget r k a
 toWidget = generalize
+
+-- | Identifies an action in a widget constructed using a builder.
+type Action = Int
+
+-- | A monadic context which may be used to construct 'Widget's.
+newtype Builder r m a = Builder (
+    StateT (Action, Map Action (ReactT r m ()))
+    (ReactT r m) a) deriving (Functor, Applicative, Monad)
+instance Monad m => MonadReact r (Builder r m) (ReactT r m) where
+    input init = Builder $ lift (input init)
+    output sig = Builder $ lift (output sig)
+
+-- | Runs a builder.
+runBuilder :: (Functor m) => Builder r m a
+    -> ReactT r m (a, Map Action (ReactT r m ()))
+runBuilder (Builder builder) = (\(res, (_, actions)) -> (res, actions)) <$>
+    runStateT builder (0, Map.empty)
+
+-- | Creates a new action within a builder.
+action :: (Monad m) => ReactT r m () -> Builder r m Action
+action act = Builder $ do
+    (id, actions) <- get
+    put (id + 1, Map.insert id act actions)
+    return id
 
 -- | Runs a widget signal within the context of a 'ReactT' @r@ 'IO'.
 runWidget :: (Ord k) => (k -> ReactT r IO ())

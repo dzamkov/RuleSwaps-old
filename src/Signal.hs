@@ -2,6 +2,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Signal (
     Signal,
@@ -10,8 +13,7 @@ module Signal (
     runReactT,
     React,
     runReact,
-    input,
-    output,
+    MonadReact (..)
 ) where
 
 import Prelude hiding (map)
@@ -235,49 +237,55 @@ type React r = ReactT r Identity
 runReact :: (forall r. React r a) -> a
 runReact x = runIdentity $ runReactT x
 
--- | Creates a new input signal, returning the signal and a procedure which
--- can be used to later change its value.
-input :: (Monad m) => a -> ReactT r m (Signal r a, Delta a -> ReactT r m a)
-input cur = ReactT $ do
-    (time, _) <- get
-    let ref = unsafePerformIO $ newIORef InputState {
-          inputData = Map.singleton time (stay cur),
-          inputProps = [] }
-    let update delta = ReactT $ do
-        (time, outputs) <- get
-        let nTime = time + 1
-        put (nTime, outputs)
-        unsafePerformIO $ do
-            state <- readIORef ref
-            let dat = inputData state
-            let (_, last) = Map.findMax dat
-            let new = delta $ end last
-            let nState = state { inputData = Map.insert nTime new dat }
-            writeIORef ref nState
-            forM_ (inputProps state) prop
-            return $ return $ end last
-    return (Prim $ Input ref, update)
+-- | @m@ is a monad similar to 'React' which can manipulate signals in the
+-- context @r@.
+class (Monad m, Monad n) => MonadReact r m n | m -> r n where
 
--- | Creates a new output for a signal, returning both current value and a
--- procedure which can be used to get stride since the last time the output
--- was accessed.
-output :: (Monad m) => Signal r a -> ReactT r m (a, ReactT r m (Stride a))
-output sig = ReactT $ do
-    (time, outputs) <- get
-    let window outputs = minimum <$> mapM readIORef outputs
-    let (ref, cur, nOutputs) = unsafePerformIO $ do
-        ref <- newIORef time
-        let nOutputs = ref : outputs
-        curWindow <- window nOutputs
-        last <- eval (evalPrim curWindow time time) sig
-        return (ref, end last, nOutputs)
-    put (time, nOutputs)
-    let look = ReactT $ do
+    -- | Creates a new input signal, returning the signal and a procedure which
+    -- can be used to later change its value.
+    input :: a -> m (Signal r a, Delta a -> n a)
+
+    -- | Creates a new output for a signal, returning both current value and a
+    -- procedure which can be used to get stride since the last time the output
+    -- was accessed.
+    output :: Signal r a -> m (a, n (Stride a))
+
+instance Monad m => MonadReact r (ReactT r m) (ReactT r m) where
+    input cur = ReactT $ do
+        (time, _) <- get
+        let ref = unsafePerformIO $ newIORef InputState {
+              inputData = Map.singleton time (stay cur),
+              inputProps = [] }
+        let update delta = ReactT $ do
+            (time, outputs) <- get
+            let nTime = time + 1
+            put (nTime, outputs)
+            unsafePerformIO $ do
+                state <- readIORef ref
+                let dat = inputData state
+                let (_, last) = Map.findMax dat
+                let new = delta $ end last
+                let nState = state { inputData = Map.insert nTime new dat }
+                writeIORef ref nState
+                forM_ (inputProps state) prop
+                return $ return $ end last
+        return (Prim $ Input ref, update)
+    output sig = ReactT $ do
         (time, outputs) <- get
-        unsafePerformIO $ do
-            from <- readIORef ref
-            curWindow <- window outputs
-            last <- eval (evalPrim curWindow from time) sig
-            writeIORef ref time
-            return $ return last
-    return (cur, look)
+        let window outputs = minimum <$> mapM readIORef outputs
+        let (ref, cur, nOutputs) = unsafePerformIO $ do
+            ref <- newIORef time
+            let nOutputs = ref : outputs
+            curWindow <- window nOutputs
+            last <- eval (evalPrim curWindow time time) sig
+            return (ref, end last, nOutputs)
+        put (time, nOutputs)
+        let look = ReactT $ do
+            (time, outputs) <- get
+            unsafePerformIO $ do
+                from <- readIORef ref
+                curWindow <- window outputs
+                last <- eval (evalPrim curWindow from time) sig
+                writeIORef ref time
+                return $ return last
+        return (cur, look)
