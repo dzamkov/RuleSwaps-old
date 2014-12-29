@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Signal (
@@ -26,7 +27,7 @@ import qualified Data.Map as Map
 import qualified Data.List as List
 import Control.Monad.Identity (Identity, runIdentity)
 import Control.Monad.State (StateT, evalStateT, get, put)
-import Control.Monad.Trans (MonadTrans (..))
+import Control.Monad.Trans
 import Control.Monad (when, unless, forM_)
 import Control.Applicative hiding (Const)
 
@@ -225,6 +226,8 @@ type Output = IORef Time
 -- | A procedure which can manipulate signals in the context @r@.
 newtype ReactT r m a = ReactT (StateT (Time, [Output]) m a)
     deriving (Functor, Applicative, Monad, MonadTrans)
+instance MonadIO m => MonadIO (ReactT r m) where
+    liftIO = lift . liftIO
 
 -- | Runs a 'ReactT'.
 runReactT :: forall m a. (Monad m) => (forall r. ReactT r m a) -> m a
@@ -250,6 +253,9 @@ class (Monad m, Monad n) => MonadReact r m n | m -> r n where
     -- was accessed.
     output :: Signal r a -> m (a, n (Stride a))
 
+instance MonadReact r m n => MonadReact r (StateT s m) n where
+    input = lift . input
+    output = lift . output
 instance Monad m => MonadReact r (ReactT r m) (ReactT r m) where
     input cur = ReactT $ do
         (time, _) <- get
