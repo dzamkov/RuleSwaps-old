@@ -19,11 +19,3 @@ executable rule-swaps
                   terminal-size
   if os(windows)
     extra-libraries:  msvcrt
-test-suite test
-  hs-source-dirs: testsuite src
-  type:           exitcode-stdio-1.0
-  main-is:        Tests/Main.hs
-  build-depends:  base,
-                  mtl,
-                  containers,
-                  HUnit

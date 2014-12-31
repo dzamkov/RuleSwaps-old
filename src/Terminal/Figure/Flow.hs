@@ -1,20 +1,17 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE FlexibleInstances #-}
 module Terminal.Figure.Flow (
     Flow,
     FlowLayout (..),
     FlowArea (..),
-    PFlow,
-    PFlowLayout (..),
     tightText,
     space,
     (+++),
     text
 ) where
 
-import Stride hiding (end)
+import Stride
 import Terminal.Draw hiding (space)
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
@@ -25,8 +22,8 @@ import Control.Applicative hiding (empty)
 data Flow
 
 type instance Layout Flow = FlowLayout
-type instance Placement Flow = FlowArea
-type instance Next Flow = PFlow
+type instance Placement Flow = (FlowArea, FullColor, Point)
+type instance Bonus Flow = Point
 
 -- | The layout information provided by a flow.
 data FlowLayout = FlowLayout {
@@ -37,7 +34,11 @@ data FlowLayout = FlowLayout {
 
     -- | The maximum possible width of the flow, as in the case where it is
     -- not broken up at all.
-    maxWidth :: Width }
+    maxWidth :: Width,
+
+    -- | Given the potential area for this flow, determines where the
+    -- remainder of the flow should start.
+    trialPlace :: FlowArea -> Point }
 
 -- | Describes an area that a flow can be placed in.
 data FlowArea = FlowArea {
@@ -48,53 +49,36 @@ data FlowArea = FlowArea {
     -- | The initial indentation of the flow.
     indent :: X }
 
--- | The layout type for a flowed figure which has a known 'FlowArea'. The
--- break points and final width of the flow have been decided, but the absolute
--- position and background color have not.
-data PFlow
+-- | Constructs a flow figure given its 'minWidth', 'maxWidth', and a function
+-- which sets the area for the flow.
+flow :: Width -> Width -> (FlowArea -> (Point, FullColor -> Point -> Draw))
+    -> Figure Flow
+flow minWidth maxWidth withArea = Figure {
+    layout = FlowLayout {
+        minWidth = minWidth,
+        maxWidth = maxWidth,
+        trialPlace = fst . withArea },
+    place = \(area, back, offset) ->
+        let (end, withContext) = withArea area
+        in (withContext back offset, end) }
 
-type instance Layout PFlow = PFlowLayout
-type instance Placement PFlow = (FullColor, Point)
-type instance Next PFlow = Static
-
--- | The layout information provided by a flow with known 'FlowArea'.
-data PFlowLayout = PFlowLayout {
-
-    -- | The point (in 'area' coordinates) where the remainder of the flow
-    -- (if any) should start.
-    end :: Point }
-
-instance HasEmpty PFlow where
-    empty = Figure {
-        layout = PFlowLayout (0, 0),
-        place = const empty }
 instance HasEmpty Flow where
-    empty = Figure {
-        layout = FlowLayout {
-            minWidth = 0,
-            maxWidth = 0 },
-        place = const empty }
+    empty = flow 0 0 (\area -> ((indent area, 0), \_ _ -> none))
 instance CanTest Flow where
     test fig = do
         let area = FlowArea {
             width = testWidth,
             indent = 0 }
-        let figP = place fig area
         let back = (Dull, Magenta)
-        let context = (back, (0, 0))
-        let (_, endY) = end $ layout figP
-        runDrawInline (endY + 1) $ draw $ place figP context
+        let (draw, (_, endY)) = place fig (area, back, (0, 0))
+        runDrawInline (endY + 1) draw
 
 -- | A flowed figure for text that will not be broken unless necessary.
 tightText :: FullColor -> String -> Figure Flow
 tightText _ [] = empty
 tightText fore text = res where
     size = length text
-    res = Figure {
-        layout = FlowLayout {
-            minWidth = size,
-            maxWidth = size },
-        place = withArea }
+    res = flow size size withArea
     withArea (FlowArea { .. }) = res where
         rem = width - indent
         (end, inline) = case (size <= rem, size <= width) of
@@ -103,11 +87,8 @@ tightText fore text = res where
             (False, False) ->
                 ((mod (indent + size) width,
                 div (indent + size) width), True)
-        res :: Figure PFlow
-        res = Figure {
-            layout = PFlowLayout end,
-            place = withContext }
-        withContext (back, (x, y)) = static draw where
+        res = (end, withContext)
+        withContext back (x, y) = draw where
             appr = (back, fore)
             cont accum y text =
                 case text of
@@ -126,49 +107,40 @@ tightText fore text = res where
 space :: Int -> Figure Flow
 space 0 = empty
 space size = res where
-    res = Figure {
-        layout = FlowLayout {
-            minWidth = 0,
-            maxWidth = size },
-        place = withArea }
+    res = flow 0 size withArea
     withArea (FlowArea { .. }) = res where
         (end, len) = case () of
             _ | indent == 0 -> ((0, 0), 0)
             _ | indent + size >= width -> ((0, 1), width - indent)
             _ -> ((indent + size, 0), size)
-        res :: Figure PFlow
-        res = Figure {
-            layout = PFlowLayout end,
-            place = withContext }
-        withContext (back, (x, y)) = static $ case len of
+        res = (end, withContext)
+        withContext back (x, y) = case len of
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
 
 (+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow
 (+++) a b = compose (\eval -> concat' <$> eval a <*> eval b) where
     concat' a b = res where
-        (aL, bL) = (dlayout a, dlayout b)
+        (aL, bL) = (layoutS a, layoutS b)
         abL = (\aL bL -> FlowLayout {
             maxWidth = maxWidth aL + maxWidth bL,
-            minWidth = max (minWidth aL) (minWidth bL) })
+            minWidth = max (minWidth aL) (minWidth bL),
+            trialPlace = \aArea ->
+                let (aEndX, aEndY) = trialPlace aL aArea
+                    bArea = aArea { indent = aEndX }
+                    (bEndX, bEndY) = trialPlace bL bArea
+                in (bEndX, aEndY + bEndY) })
             <$> aL <*> bL
-        res = dfigure abL withArea
-        withArea aArea@FlowArea { width = width } = res where
-            aP = dplace a $ pure aArea
-            aEnd = end <$> dlayout aP
-            (aEndX, aEndY) = dbreak2 aEnd
-            bArea = (\aEndX -> FlowArea {
-                width = width,
-                indent = aEndX }) <$> aEndX
-            bP = dplace b bArea
-            bEnd = end <$> dlayout bP
-            (bEndX, bEndY) = dbreak2 bEnd
-            abEnd = dcheck $ dplex2 bEndX ((+) <$> aEndY <*> bEndY)
-            res = dfigure (PFlowLayout <$> abEnd) withContext
-            withContext (back, (x, y)) = res where
-                aD = dplace aP $ pure (back, (x, y))
-                bD = dplace bP $ (\e -> (back, (x, y + e))) <$> aEndY
-                res = dstatic $ dplus (ddraw aD) (ddraw bD)
+        res = figureS abL $ funS withAll
+        withAll (aArea, back, (x, y)) = res where
+            (aDraw, aEnd) = break2S $ placeS a <*> pure (aArea, back, (x, y))
+            bContext = (\(aEndX, aEndY) ->
+                    (aArea { indent = aEndX }, back, (x, aEndY + y)))
+                <$> aEnd
+            (bDraw, bEnd) = break2S $ placeS b <*> bContext
+            abEnd = checkS $ (\(_, aEndY) (bEndX, bEndY) ->
+                (bEndX, aEndY + bEndY)) <$> aEnd <*> bEnd
+            res = plex2S (plusS aDraw bDraw) abEnd
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow

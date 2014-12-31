@@ -19,7 +19,7 @@ module Terminal.Draw (
     runDraw,
     none,
     (|%), (|%|),
-    dplus,
+    plusS,
     string,
     space,
     hline,
@@ -146,15 +146,14 @@ none = Draw []
 (|%|) :: Draw -> Draw -> Draw
 (|%|) = (|%)
 
--- | Combines two drawing operations within the context of a deltor, assuming
--- overwrite is not possible.
-dplus :: (Deltor f) => f Draw -> f Draw -> f Draw
-dplus x y = deltor (\eval -> combine <$> eval x <*> eval y) where
-    combine (Stride xs xe) (Stay y) = Complex $ SDraw (xs |%| y) xe
-    combine (Stay x) (Stride ys ye) = Complex $ SDraw (ys |%| x) ye
-    combine (Complex (SDraw xs xd)) (Complex (SDraw ys yd)) =
-        Complex $ SDraw (xs |%| ys) (xd |%| yd)
-    combine x y = (|%|) <$> x <*> y
+-- | Combines two drawing operations within the context of a 'Stride', assuming
+-- that overlap is not possible
+plusS :: Stride Draw -> Stride Draw -> Stride Draw
+plusS (Stride xs xe) (Stay y) = Complex $ SDraw (xs |%| y) xe
+plusS (Stay x) (Stride ys ye) = Complex $ SDraw (ys |%| x) ye
+plusS (Complex (SDraw xs xd)) (Complex (SDraw ys yd)) =
+    Complex $ SDraw (xs |%| ys) (xd |%| yd)
+plusS x y = (|%|) <$> x <*> y
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw

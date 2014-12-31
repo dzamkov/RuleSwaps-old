@@ -12,7 +12,6 @@ module Terminal.Figure.Block (
     Ind,
     Fix,
     Vary,
-    SBlock,
     blockify,
     Border,
     withBorder,
@@ -37,8 +36,8 @@ import Control.Applicative hiding (empty)
 data Block s
 
 type instance Layout (Block s) = Layout s
-type instance Placement (Block s) = Placement s
-type instance Next (Block s) = SBlock
+type instance Placement (Block s) = (Placement s, Point)
+type instance Bonus (Block s) = (Width, Height)
 
 -- | The layout type for a block figure which takes up a variable-size
 -- rectangular area.
@@ -48,7 +47,7 @@ type Dock = Block (Ind Vary Vary)
 -- and specifying one will determine the other.
 data Dep
 
-type instance Layout Dep = ()
+type instance Layout Dep = Either Width Height -> (Width, Height)
 type instance Placement Dep = Either Width Height
 
 -- | The sizing type for a block where the width and height are independently
@@ -78,52 +77,51 @@ type instance Layout (Vary a) = ()
 type instance Placement (Vary H) = Width
 type instance Placement (Vary V) = Height
 
--- | The layout type for a block figure with a known size.
-data SBlock
+-- | Tests a block figure by specifying a size.
+testPlace :: Placement s -> Figure (Block s) -> IO ()
+testPlace size fig = do
+    let (draw, (_, height)) = place fig (size, (0, 0))
+    runDrawInline height draw
 
-type instance Layout SBlock = (Width, Height)
-type instance Placement SBlock = Point
-type instance Next SBlock = Static
-
-instance HasEmpty SBlock where
-    empty = Figure {
-        layout = (0, 0),
-        place = const empty }
-instance CanTest SBlock where
-    test fig = do
-        let (_, height) = layout fig
-        runDrawInline height $ draw $ place fig (0, 0)
 instance CanTest (Block Dep) where
-    test fig = test $ place fig $ Left testWidth
+    test = testPlace $ Left testWidth
 instance CanTest (Block (Ind Fix Fix)) where
-    test fig = test $ place fig ((), ())
+    test = testPlace ((), ())
 instance CanTest (Block (Ind Vary Fix)) where
-    test fig = test $ place fig (testWidth, ())
+    test = testPlace (testWidth, ())
 instance CanTest (Block (Ind Fix Vary)) where
-    test fig = test $ place fig ((), testHeight)
+    test = testPlace ((), testHeight)
 instance CanTest (Block (Ind Vary Vary)) where
-    test fig = test $ place fig (testWidth, testHeight)
+    test = testPlace (testWidth, testHeight)
 
 -- | Converts a flowed figure into a dependently-sized block with the given
 -- back color.
 blockify :: (FigureLike f) => FullColor -> f Flow -> f (Block Dep)
 blockify back flow = compose (\eval -> blockify' <$> eval flow) where
     blockify' flow = res where
-        res = dfigure (pure ()) withSize
-        withSize (Left width) = res where
-            flowP = dplace flow $ pure FlowArea {
-                width = width,
-                indent = 0 }
-            end' = end <$> dlayout flowP
-            endY = dsnd end'
-            size = dcheck $ dplex2 (pure width) ((+ 1) <$> endY)
-            res = dfigure size (withOffset width flowP end')
-        withSize (Right _) = undefined -- TODO: Math and binary search
-        withOffset width flowP end (x, y) = res where
-            flowD = ddraw $ dplace flowP $ pure (back, (x, y))
+        flowL = layoutS flow
+        width' _ _ = undefined :: Width -- TODO: Binary search
+        area width = FlowArea { width = width, indent = 0 }
+        l = (\flowL spec -> case spec of
+            (Left width) -> (width, 1 + snd (trialPlace flowL $ area width))
+            (Right height) -> (width' flowL height, height)) <$> flowL
+        res = figureS l $ funS placed
+        placed (Left width, offset@(x, y)) = res where
+            (flowDraw, flowEnd) = break2S $ placeS flow <*>
+                pure (area width, back, offset)
             endSpace = (\(ex, ey) -> Draw.space back
-                (x + ex, y + ey) (width - ex)) <$> end
-            res = dstatic $ dplus flowD endSpace
+                (x + ex, y + ey) (width - ex)) <$> flowEnd
+            height = (+ 1) <$> sndS flowEnd
+            res = plex2S (plusS flowDraw endSpace) $ plex2S (pure width) height
+        placed (Right height, offset@(x, y)) = res where
+            width = width' <$> flowL <*> pure height
+            (flowDraw, flowEnd) = break2S $ placeS flow <*>
+                ((\width -> (area width, back, offset)) <$> width)
+            endSpace = (\width (ex, ey) -> Draw.space back
+                (x + ex, y + ey) (width - ex) |%|
+                Draw.fill back (x, y + ey + 1) width (height - ey - 1))
+                <$> width <*> flowEnd
+            res = plex2S (plusS flowDraw endSpace) $ plex2S width (pure height)
 
 -- | Blocks of sizing type @s@ can be enclosed by constant- width and height
 -- borders resulting in blocks of sizing type @n@.
@@ -138,7 +136,7 @@ class CanEnclose s n | s -> n where
 
 instance CanEnclose Dep Dep where
     transEnclose _ (width, height) = (f, g) where
-        f () = ()
+        f x s = let (w, h) = x s in (w + width, h + height)
         g (Left w) = Left (w - width)
         g (Right h) = Right (h - height)
 
@@ -155,20 +153,17 @@ withBorder :: forall s n f. (FigureLike f, CanEnclose s n)
     => Border -> f (Block s) -> f (Block n)
 withBorder border block = compose (\eval -> withBorder' <$> eval block) where
     withBorder' block = res where
-        (left, top, right, bottom, drawBorder) = border
+        (left, top, right, bottom, drawBorder') = border
         padWidth = left + right
         padHeight = top + bottom
         (f, g) = transEnclose (undefined :: s) (padWidth, padHeight)
-        res = dfigure (f <$> dlayout block) withSize
-        withSize size = res where
-            blockP = dplace block $ pure (g size)
-            innerSize = dlayout blockP
+        res = figureS (f <$> layoutS block) $ funS placed
+        placed (size, (x, y)) = res where
+            (drawInner, innerSize) = break2S $ placeS block <*>
+                pure (g size, (x + left, y + top))
             fullSize = (\(w, h) -> (w + padWidth, h + padHeight)) <$> innerSize
-            res = dfigure fullSize withOffset
-            withOffset (x, y) = res where
-                blockD = ddraw $ dplace blockP $ pure (x + 1, y + 1)
-                borderD = (\size -> drawBorder size (x, y)) <$> fullSize
-                res = dstatic $ dplus blockD borderD
+            drawBorder = (\size -> drawBorder' size (x, y)) <$> fullSize
+            res = plex2S (plusS drawInner drawBorder) fullSize
 
 -- | A 1-character-thick line border with the given appearance.
 lineBorder :: Appearance -> Border
@@ -210,8 +205,10 @@ instance CanDepSetSize V where
 instance CanDepSetSize p => CanSetSize p Dep (Ind Fix Fix) where
     setSize size block = compose (\eval -> setSize' <$> eval block) where
         setSize' block = res where
-            blockP = dplace block $ pure $ depPlace size
-            res = dfigure (dlayout blockP) $ const blockP
+            place = pure $ depPlace size
+            size' = layoutS block <*> place
+            res = figureS size' $ funS $ \(_, offset) ->
+                (placeS block <*> plex2S place (pure offset))
 
 -- | Sets the width of a block.
 setWidth :: (FigureLike f, CanSetSize H s n)
@@ -233,31 +230,23 @@ class CanCenter p s n | p s -> n where
 instance CanCenter H (Ind Fix a) (Ind Vary a) where
     centerAxis _ block = compose (\eval -> centerAxis' <$> eval block) where
         centerAxis' block = res where
-            layout = (\(_, v) -> ((), v)) <$> dlayout block
-            res = dfigure layout withPlacement
-            withPlacement (fullWidth, v) = res where
-                blockP = dplace block $ pure ((), v)
-                innerSize = dlayout blockP
-                fullSize = (\(_, ih) -> (fullWidth, ih)) <$> innerSize
-                res = dfigure fullSize withOffset
-                withOffset (x, y) = res where
-                    sx = (\(iw, _) -> x + (fullWidth - iw) `div` 2)
-                        <$> innerSize
-                    res = dplace blockP $ dplex2 sx (pure y)
+            layout = (\(_, v) -> ((), v)) <$> layoutS block
+            res = figureS layout $ funS placed
+            placed ((fw, v), (x, y)) = res where
+                (draw, size) = break2S $ placeS block <*>
+                    ((\(iw, _) -> (((), v), (x + (fw - iw) `div` 2, y))) <$>
+                    layoutS block)
+                res = plex2S draw $ plex2S (pure fw) (sndS size)
 instance CanCenter V (Ind a Fix) (Ind a Vary) where
     centerAxis _ block = compose (\eval -> centerAxis' <$> eval block) where
         centerAxis' block = res where
-            layout = (\(h, _) -> (h, ())) <$> dlayout block
-            res = dfigure layout withPlacement
-            withPlacement (h, fullHeight) = res where
-                blockP = dplace block $ pure (h, ())
-                innerSize = dlayout blockP
-                fullSize = (\(iw, _) -> (iw, fullHeight)) <$> innerSize
-                res = dfigure fullSize withOffset
-                withOffset (x, y) = res where
-                    sy = (\(_, ih) -> y + (fullHeight - ih) `div` 2)
-                        <$> innerSize
-                    res = dplace blockP $ dplex2 (pure x) sy
+            layout = (\(h, _) -> (h, ())) <$> layoutS block
+            res = figureS layout $ funS placed
+            placed ((h, fh), (x, y)) = res where
+                (draw, size) = break2S $ placeS block <*>
+                    ((\(_, ih) -> ((h, ()), (x, y + (fh - ih) `div` 2))) <$>
+                    layoutS block)
+                res = plex2S draw $ plex2S (fstS size) (pure fh)
 
 -- | Centers a block along the horizontal axis.
 hcenter :: (FigureLike f, CanCenter H s n) => f (Block s) -> f (Block n)
