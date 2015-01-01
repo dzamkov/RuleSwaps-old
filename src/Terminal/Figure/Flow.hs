@@ -119,7 +119,8 @@ space size = res where
             len -> Draw.space back (x + indent, y) len
 
 (+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow
-(+++) a b = compose (\eval -> concat' <$> eval a <*> eval b) where
+(+++) a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
+    hint = Just Horizontal
     concat' a b = res where
         (aL, bL) = (layoutS a, layoutS b)
         abL = (\aL bL -> FlowLayout {

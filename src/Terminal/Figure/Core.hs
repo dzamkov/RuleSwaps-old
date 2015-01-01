@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 module Terminal.Figure.Core (
     Layout,
     Placement,
@@ -9,6 +10,8 @@ module Terminal.Figure.Core (
     figureS,
     placeS,
     layoutS,
+    Axis (..),
+    ComposeHint,
     FigureLike (..),
     generalize,
     HasEmpty (..),
@@ -73,21 +76,29 @@ placeS :: Stride (Figure a) -> Stride (Placement a -> (Draw, Bonus a))
 placeS (Complex (CFigure _ sn)) = sn
 placeS s = place <$> s
 
+-- | Identifies an axis.
+data Axis
+    = Horizontal
+    | Vertical
+
+-- | Context information that may be given while composing a figure.
+type ComposeHint = Maybe Axis
+
 -- | @f@ is a type, of kind @* -> *@, which behaves like a figure, allowing
 -- composition and decoration through the usual methods for figures.
 class FigureLike f where
 
     -- | Produces a figure-like from a composition of existing figure-likes.
-    compose :: (forall g. (Applicative g)
+    compose :: ComposeHint -> (forall g. (Applicative g)
         => (forall a. f a -> g (Stride (Figure a)))
         -> g (Stride (Figure b))) -> f b
 
 instance FigureLike Figure where
-    compose inner = start $ runIdentity $ inner (Identity . stay)
+    compose _ inner = start $ runIdentity $ inner (Identity . stay)
 
 -- | Converts a figure into a figure-like.
 generalize :: (FigureLike f) => Figure a -> f a
-generalize fig = compose (\_ -> pure $ stay fig)
+generalize fig = compose Nothing (\_ -> pure $ stay fig)
 
 -- | The layout type @a@ allows for empty figures which take up no space and
 -- involves no drawing.
