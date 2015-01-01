@@ -7,10 +7,13 @@ module Terminal.Figure.Flow (
     FlowArea (..),
     tightText,
     space,
+    newline,
     (+++),
+    (===),
     text
 ) where
 
+import Prelude hiding (concat)
 import Stride
 import Terminal.Draw hiding (space)
 import qualified Terminal.Draw as Draw
@@ -118,9 +121,17 @@ space size = res where
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
 
-(+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow
-(+++) a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
-    hint = Just Horizontal
+-- | A flowed figure which forces a break.
+newline :: Figure Flow
+newline = flow 0 0 withArea where
+    withArea (FlowArea { .. }) = res where
+        end = (0, 1)
+        len = width - indent
+        res = (end, \back (x, y) -> Draw.space back (x + indent, y) len)
+
+-- | Used to define '(+++)' and '(===)'
+concat :: (FigureLike f) => ComposeHint -> f Flow -> f Flow -> f Flow
+concat hint a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
     concat' a b = res where
         (aL, bL) = (layoutS a, layoutS b)
         abL = (\aL bL -> FlowLayout {
@@ -142,6 +153,14 @@ space size = res where
             abEnd = checkS $ (\(_, aEndY) (bEndX, bEndY) ->
                 (bEndX, aEndY + bEndY)) <$> aEnd <*> bEnd
             res = plex2S (plusS aDraw bDraw) abEnd
+
+-- | Concatenates two flowed figures.
+(+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow
+(+++) = concat (Just Horizontal)
+
+-- | Concatenates two flowed figures vertically.
+(===) :: (FigureLike f) => f Flow -> f Flow -> f Flow
+(===) a = concat (Just Vertical) (a +++ generalize newline)
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow

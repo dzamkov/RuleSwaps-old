@@ -17,7 +17,9 @@ module Terminal.Figure.Block (
     Border,
     withBorder,
     lineBorder,
+    padding,
     box,
+    pad,
     setWidth,
     setHeight,
     hcenter,
@@ -138,6 +140,10 @@ instance CanEnclose Dep Dep where
         f x s = let (w, h) = x s in (w + width, h + height)
         g (Left w) = Left (w - width)
         g (Right h) = Right (h - height)
+instance CanEnclose (Ind Fix Fix) (Ind Fix Fix) where
+    transEnclose _ (width, height) = (f, g) where
+        f (w, h) = (w + width, h + height)
+        g _ = ((), ())
 
 -- | Describes a border that can be applied to a block. The size of the border
 -- in each direction (left, top, right, bottom) is given, along with a function
@@ -178,10 +184,25 @@ lineBorder appr = (1, 1, 1, 1, draw) where
         Draw.string appr (x, y + height - 1) "+",
         Draw.vline appr '|' (x, y + 1) (height - 2)]
 
+-- | A border which takes up space and does not much else.
+padding :: FullColor -> (Width, Height, Width, Height) -> Border
+padding back (l, t, r, b) = (l, t, r, b, draw) where
+    draw (width, height) (x, y) = foldl1 (|%|) [
+        Draw.fill back (x, y) width t,
+        Draw.fill back (x, y + t) l (height - t - b),
+        Draw.fill back (x + width - r, y + t) r (height - t - b),
+        Draw.fill back (x, y + height - b) width b]
+
 -- | Encloses a block with a graphical box of the given appearance.
 box :: (FigureLike f, CanEnclose s n) => Appearance
     -> f (Block s) -> f (Block n)
 box = withBorder . lineBorder
+
+-- | Applies padding to a block.
+pad :: (FigureLike f, CanEnclose s n) => FullColor
+    -> (Width, Height, Width, Height)
+    -> f (Block s) -> f (Block n)
+pad back = withBorder . padding back
 
 -- | @s@ is a sizing type for a block for which the size of the axis specified
 -- by @p@ can be set, resulting in a block of sizing type @n@.
