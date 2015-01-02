@@ -10,6 +10,8 @@ executable rule-swaps
                   mtl,
                   transformers,
                   containers,
+                  void,
+                  operational,
                   binary,
                   cryptohash,
                   bytestring,

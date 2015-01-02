@@ -1,14 +1,17 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE KindSignatures #-}
 module Terminal.Page (
     Key,
     Navigatree (..),
     Hole,
+    Holes (..),
     defHole,
     getHole,
     modifyHole,
     setHole,
-    AnyHole (..),
+    Concrete (..),
+    WithHole (..),
     Context (..),
     Page (..),
     figureToPage,
@@ -34,21 +37,27 @@ import Control.Applicative
 type Key = Char
 
 -- | Describes the navigational layout of the elements in a page.
-data Navigatree k h
-    = Option k (Maybe (Navigatree k h))
+data Navigatree h k
+    = Option k (Maybe (Navigatree h k))
     | forall a. Hole (Hole h a)
-    | Linear Axis [Navigatree k h] Bool Bool
+    | Linear Axis [Navigatree h k] Bool Bool
 
 -- | Tries constructing a linear 'Navigatree' with the given axis, options,
 -- and whether leaving the list is possible along the beginning and end.
-linear :: Axis -> [Navigatree k h] -> Bool -> Bool -> Maybe (Navigatree k h)
+linear :: Axis -> [Navigatree h k] -> Bool -> Bool -> Maybe (Navigatree h k)
 linear _ [] _ _ = Nothing
 linear _ [single] True True = Just single
 linear axis options l r = Just $ Linear axis options l r
 
--- | Identifies a hole within a product type containing several holes. Note
--- the similarity to a lens.
+-- | Identifies a hole within a hole-carrying structure. Note the similarity to
+-- a lens.
 type Hole h a = forall f g. (Functor f) => (g a -> f (g a)) -> h g -> f (h g)
+
+-- | @h@ is a hole-carrying structure, a product type containing several holes.
+class Holes h where
+
+    -- | Traverse a hole-carrying structure.
+    traverseH :: Applicative m => (forall a. f a -> m (g a)) -> h f -> m (h g)
 
 -- | Constructs a hole given a 'get' function and a 'set' function.
 defHole :: (forall f. h f -> f a) -> (forall f. f a -> h f -> h f) -> Hole h a
@@ -66,12 +75,18 @@ modifyHole hole f struct = runIdentity $ hole (Identity . f) struct
 setHole :: Hole h a -> f a -> h f -> h f
 setHole hole value = modifyHole hole (const value)
 
--- | Identifies a hole of any layout type.
-data AnyHole h = forall a. AnyHole (Hole h a)
+-- | A hole-carrying structure with no holes.
+data Concrete (f :: * -> *) = Concrete
+instance Holes Concrete where
+    traverseH _ Concrete = pure Concrete
+
+-- | Adds a hole to a hole-carrying structure.
+data WithHole h a f = WithHole (f a) (h f)
+-- TODO: Easy way of making hole-carrying structures.
 
 -- | Contains the information needed to create a (stride of a) figure for a
 -- page.
-data Context k h = Context {
+data Context h k = Context {
 
     -- | The keys assigned to each option in the page.
     keys :: k -> Maybe Key,
@@ -85,44 +100,39 @@ data Context k h = Context {
 -- | A figure-like which enables limited interactivity. It has several options
 -- which may be highlighted and selected, and has several "holes" which can
 -- be filled with other figure-likes.
-data Page k h a = Page {
+data Page h k a = Page {
 
     -- | Contains the options in this page, associated with the possible
     -- shortcut keys that may be used, ordered by preference.
     shortcuts :: Map k [Key],
 
     -- | The navigational layout of this page.
-    navigatree :: Maybe (Navigatree k h),
-
-    -- | The set of holes this page contains.
-    holes :: [AnyHole h],
+    navigatree :: Maybe (Navigatree h k),
 
     -- | Gets the figure for this page using the given context.
-    figure :: Context k h -> Stride (Figure a) }
+    figure :: Context h k -> Stride (Figure a) }
 
-instance Ord k => FigureLike (Page k h) where
+instance Ord k => FigureLike (Page h k) where
     compose hint inner = toPage (inner evalInner) where
         evalInner page = Compose $
-            modify (\(s, t, h) ->
+            modify (\(s, t) ->
                 (Map.union s (shortcuts page),
-                maybeToList (navigatree page) ++ t,
-                holes page ++ h)) *>
+                maybeToList (navigatree page) ++ t)) *>
             pure (figure page <$> ask)
         toPage :: Compose
-            (State (Map k [Key], [Navigatree k h], [AnyHole h]))
-            (Reader (Context k h))
-            (Stride (Figure a)) -> Page k h a
+            (State (Map k [Key], [Navigatree h k]))
+            (Reader (Context h k))
+            (Stride (Figure a)) -> Page h k a
         toPage (Compose state) = res where
-            (reader, (s, t, h)) = runState state (Map.empty, [], [])
+            (reader, (s, t)) = runState state (Map.empty, [])
             axis = fromMaybe Horizontal hint
             res = Page {
                 shortcuts = s,
                 navigatree = linear axis t True True,
-                holes = h,
                 figure = runReader reader }
 
 -- | Converts a figure into a static page.
-figureToPage :: (Ord k) => Figure a -> Page k h a
+figureToPage :: (Ord k) => Figure a -> Page h k a
 figureToPage = generalize
 
 -- | A possible highlight function for 'option' which sets the back color of
@@ -141,27 +151,24 @@ highlightFlow back selected source = figureS (layoutS source) $
 -- which highlights the figure.
 option :: (Ord k) => k -> [Key]
     -> (Stride Bool -> Stride (Figure a) -> Stride (Figure a))
-    -> Page k h a -> Page k h a
+    -> Page h k a -> Page h k a
 option id keys decorate page = Page {
     shortcuts = Map.insert id keys $ shortcuts page,
     navigatree = Just $ Option id $ navigatree page,
-    holes = holes page,
     figure = \context -> decorate
         (checkS $ (== Just id) <$> selected context)
         (figure page context) }
 
 -- | Creates a page which displays information about key assignments.
-keyView :: ((k -> Maybe Key) -> Figure a) -> Page k h a
+keyView :: ((k -> Maybe Key) -> Figure a) -> Page h k a
 keyView figure = Page {
     shortcuts = Map.empty,
     navigatree = Nothing,
-    holes = [],
     figure = stay . figure . keys }
 
 -- | Constructs a page for the given hole.
-hole :: Hole h a -> Page k h a
+hole :: Hole h a -> Page h k a
 hole hole = Page {
     shortcuts = Map.empty,
     navigatree = Just $ Hole hole,
-    holes = [AnyHole hole],
     figure = (`fill` hole) }

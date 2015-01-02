@@ -4,6 +4,7 @@ import System.Console.ANSI
 import Stride
 import Terminal.Figure
 import Terminal.Page
+import Terminal.Widget
 import Control.Applicative hiding (empty)
 
 data MenuOptions = Join | Host | Exit deriving (Eq, Ord)
