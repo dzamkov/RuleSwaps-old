@@ -3,6 +3,10 @@
 module Terminal.Draw (
     X, Y,
     Point,
+    cursorUp,
+    cursorDown,
+    cursorForward,
+    cursorBackward,
     changePosition,
     Width,
     Height,

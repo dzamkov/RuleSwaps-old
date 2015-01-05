@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE GADTs #-}
 module Terminal.Widget (
     Event (..),
@@ -12,13 +14,27 @@ module Terminal.Widget (
     pageToWidget,
     mapFilterAll,
     mapFilterInput,
-    mapFilterOutput
+    mapFilterOutput,
+    runWidget
 ) where
 
-import Terminal.Page
-import Control.Monad.Operational
-import Control.Monad (forever)
+import Stride
+import Terminal.Input
+import Terminal.Draw hiding (fill)
+import Terminal.Figure
+import Terminal.Page hiding (Left, Right, figure, navigate)
+import qualified Terminal.Page as Page
+import Data.Functor.Compose
 import Data.Void
+import Data.Traversable
+import Data.IORef
+import Data.Maybe (catMaybes)
+import qualified Data.Map as Map
+import qualified System.Console.Terminal.Size as Size
+import Control.Monad.Operational
+import Control.Monad.State (runState, get, put)
+import Control.Monad (forever, replicateM_)
+import Control.Applicative
 
 -- | Identifies an event a widget can respond to.
 data Event i o' k
@@ -63,7 +79,7 @@ data Internal i o i' o' h k a = Internal {
     program :: Program (WidgetInstr i o i' o' h k) (Widget i o a) }
 
 -- | A figure-like which enables stateful interactivity.
-data Widget i o a = forall i' o' h k. (Ord k)
+data Widget i o a = forall i' o' h k. (Holes h, Ord k)
     => Widget (Internal i o i' o' h k a)
 
 -- | Converts a concrete page into a simple widget which emits an event when
@@ -110,3 +126,186 @@ mapFilterInput f = mapFilterAll f Just
 -- | Maps and filters the output from a widget.
 mapFilterOutput :: (o -> Maybe n) -> Widget i o a -> Widget i n a
 mapFilterOutput = mapFilterAll Just
+
+
+-- | The procedures needed to run a widget that is shared by all running
+-- widgets.
+data GlobalContext = GlobalContext {
+
+    -- | Request keys. Each request consists of a procedure, to be called
+    -- when the key is pressed, and a list of possible keys, ordered by
+    -- preference. The actual key assignments are returned.
+    allocKeys :: forall t. (Traversable t)
+        => t (IO (), [Key]) -> IO (t (Maybe Key)),
+
+    -- | Free assigned keys, so that they may be assigned to other widgets.
+    freeKeys :: [Key] -> IO (),
+
+    -- | Requests keyboard focus. The procedure to process key input is
+    -- given. If successful, the procedure to release focus is returned.
+    focus :: (Char -> IO ()) -> IO (Maybe (IO ())) }
+
+-- | The procedures needed to run a widget.
+data InstanceContext o = InstanceContext {
+
+    -- | Sends an output message.
+    send :: o -> IO (),
+
+    -- | Requests redraw.
+    redraw :: IO () }
+
+-- | The control procedures provided by a running widget.
+data InstanceControl i a = InstanceControl {
+
+    -- | Receives an input message.
+    receive :: i -> IO (),
+
+    -- Notifies of a change of selection into or within the widget. Returns
+    -- whether the selection stays within the widget.
+    navigate :: Direction -> IO Bool,
+
+    -- Gets the stride of the figure used to display this widget since the
+    -- last call to this function. The parameter indicates whether any
+    -- widget has focus.
+    figure :: IO (Stride (Bool -> Figure a)),
+
+    -- Notifies the widget that it is being destroyed/replaced. This causes
+    -- the widget to free its owned keys, and possibly keyboard focus.
+    destroy :: IO () }
+
+-- | The internal implementation of 'runWidget'.
+runWidget' :: forall i o a. GlobalContext
+    -> InstanceContext o
+    -> IORef (InstanceControl i a)
+    -> Widget i o a -> IO ()
+runWidget' global context controlRef widget = res widget where
+    res (Widget internal) = runInternal internal
+    runInternal :: forall i' o' h k. (Holes h, Ord k)
+        => Internal i o i' o' h k a -> IO ()
+    runInternal internal = mdo
+
+        -- Shortcuts
+        keys <- allocKeys global $
+            Map.mapWithKey (\id keys -> (onKey id, keys)) $
+            shortcuts $ page internal
+        let onKey = process . Select -- TODO: highlight instead of select
+        let destroyThis = freeKeys global $ catMaybes $ Map.elems keys
+
+        -- Drawing
+        figureRef <- newIORef Nothing
+        let figureThis = do
+            figureCache <- readIORef figureRef
+            let childFigure childControlRef = do
+                childControl <- readIORef $ getCompose childControlRef
+                childFigure <- figure childControl
+                return $ Compose $ Compose childFigure
+            case figureCache of
+                Just cache -> return $ stay cache
+                Nothing -> do
+                    childFigures <- traverseH childFigure children
+                    let result = funS (\anyFocus ->
+                          Page.figure (page internal) $ Page.Context {
+                            keys = if anyFocus
+                                then const Nothing
+                                else (Map.!) keys,
+                            fill = \hole -> (getCompose $ getCompose $
+                                getHole hole childFigures) <*> pure anyFocus,
+                            selected = stay Nothing {- TODO -} })
+                    -- TODO: Indicate first-time drawing
+                    writeIORef figureRef $ Just $ end result
+                    return result
+
+        -- Children
+        let childContext = InstanceContext {
+            send = process . ReceiveChild,
+            redraw = writeIORef figureRef Nothing }
+        let setupChild :: forall b. Widget i' o' b
+                -> IO (Compose IORef (InstanceControl i') b)
+            setupChild child = do
+                childControlRef <- newIORef undefined
+                runWidget' global childContext childControlRef child
+                return $ Compose childControlRef
+        children <- traverseH setupChild $ holes internal
+
+        -- Programmability
+        let interpret :: ProgramView
+                (WidgetInstr i o i' o' h k)
+                (Widget i o a) -> IO ()
+            interpret (Return nWidget) = do
+                destroyThis
+                runWidget' global context controlRef nWidget
+            interpret (Await :>>= cont) = writeIORef contRef cont
+            interpret (Replace hole nChild :>>= cont) = do
+                let childControlRef = getCompose $ getHole hole children
+                childControl <- readIORef childControlRef
+                destroy childControl
+                runWidget' global childContext childControlRef nChild
+                interpret $ view $ cont ()
+            interpret (SendParent msg :>>= cont) = do
+                send context msg
+                interpret $ view $ cont ()
+            interpret (SendChild msg :>>= cont) = do
+                let sendChild msg childControlRef = do
+                    childControl <- readIORef $ getCompose childControlRef
+                    receive childControl msg
+                    return $ Const undefined
+                traverseH (sendChild msg) children
+                interpret $ view $ cont ()
+        let process :: Event i o' k -> IO ()
+            process event = do
+                cont <- readIORef contRef
+                interpret $ view $ cont event
+        contRef <- newIORef undefined
+
+        -- Setup control interface
+        writeIORef controlRef InstanceControl {
+            receive = process . ReceiveParent,
+            navigate = undefined, -- TODO
+            figure = figureThis,
+            destroy = destroyThis }
+        return ()
+
+-- | Runs a widget taking up the full terminal, given a procedure to listen for
+-- input messages and a procedure to respond to output messages.
+runWidget :: IO i -> (o -> IO ())
+    -> Widget i o (Block (Ind Vary Vary)) -> IO ()
+runWidget input output widget = do
+    keysRef <- newIORef Map.empty
+    let assignKeys struct = forM struct (\(act, pKeys) -> do
+        keys <- get
+        let tryAdd [] = return Nothing
+            tryAdd (pKey : pKeys) = case Map.lookup pKey keys of
+                Nothing -> do
+                    put $ Map.insert pKey act keys
+                    return $ Just pKey
+                Just _ -> tryAdd pKeys
+        tryAdd pKeys)
+    let global = GlobalContext {
+        allocKeys = \struct -> do
+            keys <- readIORef keysRef
+            let (nStruct, nKeys) = runState (assignKeys struct) keys
+            writeIORef keysRef nKeys
+            return nStruct,
+        freeKeys = \keys -> modifyIORef keysRef
+            (`Map.difference` (Map.fromList $ map (\x -> (x, ())) keys)),
+        focus = undefined } -- TODO
+    let inst = InstanceContext {
+        send = output,
+        redraw = return () }
+    controlRef <- newIORef undefined
+    runWidget' global inst controlRef widget
+    let redraw = do
+        control <- readIORef controlRef
+        fig <- (<*> pure False) <$> figure control
+        Just size' <- Size.size
+        let size = (Size.width size', Size.height size')
+        -- TODO: Support resizing
+        let drawS = fstS (placeS fig <*> pure (size, (0, 0)))
+        -- TODO: Strides
+        replicateM_ (snd size) $ putStrLn ""
+        cursorUp $ snd size
+        runDraw (end drawS) (fst size, (0, 0), defaultAppearance)
+    redraw
+    key <- getHiddenChar
+    -- TODO: Respond to key
+    return ()

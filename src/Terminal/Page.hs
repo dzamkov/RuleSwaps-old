@@ -3,7 +3,10 @@
 {-# LANGUAGE KindSignatures #-}
 module Terminal.Page (
     Key,
-    Navigatree (..),
+    NavigaTree,
+    Direction (..),
+    NavigaCursor,
+    navigate,
     Hole,
     Holes (..),
     defHole,
@@ -37,17 +40,27 @@ import Control.Applicative
 type Key = Char
 
 -- | Describes the navigational layout of the elements in a page.
-data Navigatree h k
-    = Option k (Maybe (Navigatree h k))
+data NavigaTree h k
+    = Option k (Maybe (NavigaTree h k))
     | forall a. Hole (Hole h a)
-    | Linear Axis [Navigatree h k] Bool Bool
+    | Linear Axis [NavigaTree h k] Bool Bool
 
--- | Tries constructing a linear 'Navigatree' with the given axis, options,
+-- | Tries constructing a linear 'NavigaTree' with the given axis, options,
 -- and whether leaving the list is possible along the beginning and end.
-linear :: Axis -> [Navigatree h k] -> Bool -> Bool -> Maybe (Navigatree h k)
+linear :: Axis -> [NavigaTree h k] -> Bool -> Bool -> Maybe (NavigaTree h k)
 linear _ [] _ _ = Nothing
 linear _ [single] True True = Just single
 linear axis options l r = Just $ Linear axis options l r
+
+-- | Identifies a direction in which navigation is possible.
+data Direction = Left | Up | Right | Down
+
+-- | A zipper for a 'NavigaTree'.
+data NavigaCursor h k = NavigaCursor
+
+-- | Advances a certain direction within a 'NavigaCursor'.
+navigate :: Direction -> NavigaCursor h k -> Maybe (NavigaCursor h k)
+navigate _ NavigaCursor = undefined -- TODO
 
 -- | Identifies a hole within a hole-carrying structure. Note the similarity to
 -- a lens.
@@ -107,7 +120,7 @@ data Page h k a = Page {
     shortcuts :: Map k [Key],
 
     -- | The navigational layout of this page.
-    navigatree :: Maybe (Navigatree h k),
+    navigatree :: Maybe (NavigaTree h k),
 
     -- | Gets the figure for this page using the given context.
     figure :: Context h k -> Stride (Figure a) }
@@ -120,7 +133,7 @@ instance Ord k => FigureLike (Page h k) where
                 maybeToList (navigatree page) ++ t)) *>
             pure (figure page <$> ask)
         toPage :: Compose
-            (State (Map k [Key], [Navigatree h k]))
+            (State (Map k [Key], [NavigaTree h k]))
             (Reader (Context h k))
             (Stride (Figure a)) -> Page h k a
         toPage (Compose state) = res where

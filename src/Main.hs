@@ -44,13 +44,5 @@ menuBox =
 
 menuPage = center $ pad screenBack (9, 9, 9, 9) $ menuBox
 
-context = Context {
-    keys = (\id -> case id of
-        Join -> Just 'j'
-        Host -> Just 'h'
-        Exit -> Just 'e'),
-    fill = undefined,
-    selected = stay $ Just Host }
-
 main :: IO ()
-main = test $ start $ figure menuPage context
+main = runWidget undefined undefined (pageToWidget menuPage)
