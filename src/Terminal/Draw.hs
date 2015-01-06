@@ -23,6 +23,7 @@ module Terminal.Draw (
     runDraw,
     none,
     (|%), (|%|),
+    paintD,
     plusD,
     string,
     space,
@@ -146,6 +147,12 @@ none = Draw []
 -- | Combines two drawing operations assuming overwrite is not possible.
 (|%|) :: Draw -> Draw -> Draw
 (|%|) = (|%)
+
+-- | Gets the drawing operation that must be performed to apply the given
+-- delta.
+paintD :: Delta Draw -> Draw
+paintD (Complex (DDraw a _)) = a
+paintD dx = final dx
 
 -- | Combines two drawing operations within the context of a 'Delta', assuming
 -- that overlap is not possible

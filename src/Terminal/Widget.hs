@@ -28,7 +28,7 @@ import Data.Functor.Compose
 import Data.Void
 import Data.Traversable
 import Data.IORef
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Map as Map
 import qualified System.Console.Terminal.Size as Size
 import Control.Monad.Operational
@@ -151,7 +151,8 @@ data InstanceContext o = InstanceContext {
     -- | Sends an output message.
     send :: o -> IO (),
 
-    -- | Requests redraw.
+    -- | Requests redraw. This will be called when the widget is
+    -- instantiated.
     redraw :: IO () }
 
 -- | The control procedures provided by a running widget.
@@ -178,7 +179,7 @@ runWidget' :: forall i o a. GlobalContext
     -> InstanceContext o
     -> IORef (InstanceControl i a)
     -> Widget i o a -> IO ()
-runWidget' global context controlRef widget = res widget where
+runWidget' global context controlRef = res where
     res (Widget internal) = runInternal internal
     runInternal :: forall i' o' h k. (Holes h, Ord k)
         => Internal i o i' o' h k a -> IO ()
@@ -192,7 +193,7 @@ runWidget' global context controlRef widget = res widget where
         let destroyThis = freeKeys global $ catMaybes $ Map.elems keys
 
         -- Drawing
-        figureRef <- newIORef Nothing
+        figureRef <- newIORef (Left True)
         let figureThis = do
             figureCache <- readIORef figureRef
             let childFigure childControlRef = do
@@ -200,25 +201,34 @@ runWidget' global context controlRef widget = res widget where
                 childFigure <- figure childControl
                 return $ Compose $ Compose childFigure
             case figureCache of
-                Just cache -> return $ keep cache
-                Nothing -> do
+                (Right cache) -> return $ keep cache
+                (Left firstTime) -> do
                     childFigures <- traverseH childFigure children
-                    let result = funD (\anyFocus ->
-                          Page.figure (page internal) $ Page.Context {
+                    let result' = funD (\anyFocus ->
+                          Page.figure (page internal) Page.Context {
                             keys = if anyFocus
                                 then const Nothing
                                 else (Map.!) keys,
-                            fill = \hole -> (getCompose $ getCompose $
+                            fill = \hole -> getCompose (getCompose $
                                 getHole hole childFigures) <*> pure anyFocus,
                             selected = keep Nothing {- TODO -} })
-                    -- TODO: Indicate first-time drawing
-                    writeIORef figureRef $ Just $ final result
+                    let result = if firstTime
+                          then set (final result')
+                          else result'
+                    writeIORef figureRef $ Right $ final result
                     return result
+        let redrawThis = do
+            figureCache <- readIORef figureRef
+            case figureCache of
+                Right _ -> do
+                    writeIORef figureRef $ Left False
+                    redraw context
+                _ -> return ()
 
         -- Children
         let childContext = InstanceContext {
             send = process . ReceiveChild,
-            redraw = writeIORef figureRef Nothing }
+            redraw = redrawThis }
         let setupChild :: forall b. Widget i' o' b
                 -> IO (Compose IORef (InstanceControl i') b)
             setupChild child = do
@@ -263,13 +273,13 @@ runWidget' global context controlRef widget = res widget where
             navigate = undefined, -- TODO
             figure = figureThis,
             destroy = destroyThis }
-        return ()
+        redraw context
 
 -- | Runs a widget taking up the full terminal, given a procedure to listen for
 -- input messages and a procedure to respond to output messages.
 runWidget :: IO i -> (o -> IO ())
     -> Widget i o (Block (Ind Vary Vary)) -> IO ()
-runWidget input output widget = do
+runWidget _ output widget = do
     keysRef <- newIORef Map.empty
     let assignKeys struct = forM struct (\(act, pKeys) -> do
         keys <- get
@@ -294,18 +304,34 @@ runWidget input output widget = do
         redraw = return () }
     controlRef <- newIORef undefined
     runWidget' global inst controlRef widget
-    let redraw = do
+    let getSize = do
+        Just size' <- Size.size
+        return (Size.width size', Size.height size')
+    initialSize <- getSize
+    sizeRef <- newIORef initialSize
+    let getDraw sizeD = do
         control <- readIORef controlRef
         fig <- (<*> pure False) <$> figure control
-        Just size' <- Size.size
-        let size = (Size.width size', Size.height size')
-        -- TODO: Support resizing
-        let drawD = fstD (placeD fig <*> pure (size, (0, 0)))
-        -- TODO: Delta
-        replicateM_ (snd size) $ putStrLn ""
-        cursorUp $ snd size
-        runDraw (final drawD) (fst size, (0, 0), defaultAppearance)
-    redraw
-    key <- getHiddenChar
-    -- TODO: Respond to key
-    return ()
+        return $ fstD (placeD fig <*> plex2D sizeD (pure (0, 0)))
+    let initialHeight = snd initialSize
+    replicateM_ initialHeight $ putStrLn ""
+    cursorUp initialHeight
+    initialDraw <- getDraw (set initialSize)
+    let initialSt = (fst initialSize, (0, 0), defaultAppearance)
+    stRef <- runDraw (final initialDraw) initialSt >>= newIORef
+    let redraw = do
+        lastSize <- readIORef sizeRef
+        curSize <- getSize
+        writeIORef sizeRef curSize
+        let sizeD = checkD $ stride lastSize curSize
+        drawD <- getDraw sizeD
+        st <- readIORef stRef
+        nSt <- runDraw (paintD drawD) st
+        writeIORef stRef nSt
+    forever $ do
+        key <- getHiddenChar
+        -- TODO: input
+        -- TODO: navigation and further key processing
+        keys <- readIORef keysRef
+        fromMaybe (return ()) $ Map.lookup key keys
+        redraw
