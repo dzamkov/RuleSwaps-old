@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
@@ -10,7 +11,6 @@ module Terminal.Widget (
     sendParent,
     sendChild,
     Widget (..),
-    Concrete (..),
     pageToWidget,
     mapFilterAll,
     mapFilterInput,
@@ -19,6 +19,8 @@ module Terminal.Widget (
 ) where
 
 import Delta
+import Record (Record, HasRecord, RecordRel1, Void1)
+import qualified Record
 import Terminal.Input
 import Terminal.Draw hiding (fill)
 import Terminal.Figure
@@ -45,7 +47,7 @@ data Event i o' k
 -- | An instruction that can be performed by a widget.
 data WidgetInstr i o i' o' h k a where
     Await :: WidgetInstr i o i' o' h k (Event i o' k)
-    Replace :: Hole h a -> Widget i' o' a -> WidgetInstr i o i' o' h k ()
+    Replace :: h a -> Widget i' o' a -> WidgetInstr i o i' o' h k ()
     SendParent :: o -> WidgetInstr i o i' o' h k ()
     SendChild :: i' -> WidgetInstr i o i' o' h k ()
 
@@ -54,7 +56,7 @@ await :: Program (WidgetInstr i o i' o' h k) (Event i o' k)
 await = singleton Await
 
 -- | Replaces the contents of a hole with the given widget.
-replace :: Hole h a -> Widget i' o' a -> Program (WidgetInstr i o i' o' h k) ()
+replace :: h a -> Widget i' o' a -> Program (WidgetInstr i o i' o' h k) ()
 replace hole = singleton . Replace hole
 
 -- | Sends a message to the parent widget.
@@ -66,28 +68,28 @@ sendChild :: i' -> Program (WidgetInstr i o i' o' h k) ()
 sendChild = singleton . SendChild
 
 -- | Contains the internal information for a widget.
-data Internal i o i' o' h k a = Internal {
+data Internal i o i' o' rh h k a = Internal {
 
     -- | The immutable page for this widget.
     page :: Page h k a,
 
     -- | The initial child widgets to fill the holes for the widget.
-    holes :: h (Widget i' o'),
+    holes :: rh (Widget i' o'),
 
     -- | The program that implements the logic for this widget. When the
     -- program finishes, the widget will be replaced by the returned widget.
     program :: Program (WidgetInstr i o i' o' h k) (Widget i o a) }
 
 -- | A figure-like which enables stateful interactivity.
-data Widget i o a = forall i' o' h k. (Holes h, Ord k)
-    => Widget (Internal i o i' o' h k a)
+data Widget i o a = forall i' o' rh h k. (RecordRel1 rh h, HasRecord k)
+    => Widget (Internal i o i' o' rh h k a)
 
 -- | Converts a concrete page into a simple widget which emits an event when
 -- an option is selected.
-pageToWidget :: (Ord k) => Page Concrete k a -> Widget Void k a
+pageToWidget :: (HasRecord k) => Page Void1 k a -> Widget Void k a
 pageToWidget page = Widget Internal {
     page = page,
-    holes = Concrete,
+    holes = Record.gen1 undefined,
     program = forever $ do
         event <- await
         case event of
@@ -181,16 +183,17 @@ runWidget' :: forall i o a. GlobalContext
     -> Widget i o a -> IO ()
 runWidget' global context controlRef = res where
     res (Widget internal) = runInternal internal
-    runInternal :: forall i' o' h k. (Holes h, Ord k)
-        => Internal i o i' o' h k a -> IO ()
+    runInternal :: forall i' o' rh h k. (RecordRel1 rh h, HasRecord k)
+        => Internal i o i' o' rh h k a -> IO ()
     runInternal internal = mdo
 
         -- Shortcuts
-        keys <- allocKeys global $
-            Map.mapWithKey (\id keys -> (onKey id, keys)) $
-            shortcuts $ page internal
+        let keys' :: Record k (IO (), [Key])
+            keys' = Record.mapWithName (\name keys -> (onKey name, keys)) $
+                Record.fromList $ shortcuts $ page internal
+        keys <- allocKeys global keys'
         let onKey = process . Select -- TODO: highlight instead of select
-        let destroyThis = freeKeys global $ catMaybes $ Map.elems keys
+        let destroyThis = freeKeys global $ catMaybes $ Record.elems keys
 
         -- Drawing
         figureRef <- newIORef (Left True)
@@ -203,14 +206,15 @@ runWidget' global context controlRef = res where
             case figureCache of
                 (Right cache) -> return $ keep cache
                 (Left firstTime) -> do
-                    childFigures <- traverseH childFigure children
+                    childFigures <- Record.traverse1 childFigure children
                     let result' = funD (\anyFocus ->
                           Page.figure (page internal) Page.Context {
                             keys = if anyFocus
                                 then const Nothing
-                                else (Map.!) keys,
-                            fill = \hole -> getCompose (getCompose $
-                                getHole hole childFigures) <*> pure anyFocus,
+                                else (`Record.get` keys),
+                            fill = \hole -> getCompose
+                                (getCompose $ Record.get1 hole childFigures)
+                                <*> pure anyFocus,
                             selected = keep Nothing {- TODO -} })
                     let result = if firstTime
                           then set (final result')
@@ -235,7 +239,7 @@ runWidget' global context controlRef = res where
                 childControlRef <- newIORef undefined
                 runWidget' global childContext childControlRef child
                 return $ Compose childControlRef
-        children <- traverseH setupChild $ holes internal
+        children <- Record.traverse1 setupChild $ holes internal
 
         -- Programmability
         let interpret :: ProgramView
@@ -246,7 +250,7 @@ runWidget' global context controlRef = res where
                 runWidget' global context controlRef nWidget
             interpret (Await :>>= cont) = writeIORef contRef cont
             interpret (Replace hole nChild :>>= cont) = do
-                let childControlRef = getCompose $ getHole hole children
+                let childControlRef = getCompose $ Record.get1 hole children
                 childControl <- readIORef childControlRef
                 destroy childControl
                 runWidget' global childContext childControlRef nChild
@@ -259,7 +263,7 @@ runWidget' global context controlRef = res where
                     childControl <- readIORef $ getCompose childControlRef
                     receive childControl msg
                     return $ Const undefined
-                traverseH (sendChild msg) children
+                Record.traverse1 (sendChild msg) children
                 interpret $ view $ cont ()
         let process :: Event i o' k -> IO ()
             process event = do
@@ -270,7 +274,7 @@ runWidget' global context controlRef = res where
         -- Setup control interface
         writeIORef controlRef InstanceControl {
             receive = process . ReceiveParent,
-            navigate = undefined, -- TODO
+            navigate = undefined, -- TODO: navigation
             figure = figureThis,
             destroy = destroyThis }
         redraw context
@@ -298,7 +302,7 @@ runWidget _ output widget = do
             return nStruct,
         freeKeys = \keys -> modifyIORef keysRef
             (`Map.difference` (Map.fromList $ map (\x -> (x, ())) keys)),
-        focus = undefined } -- TODO
+        focus = undefined } -- TODO: focus
     let inst = InstanceContext {
         send = output,
         redraw = return () }
@@ -330,7 +334,7 @@ runWidget _ output widget = do
         writeIORef stRef nSt
     forever $ do
         key <- getHiddenChar
-        -- TODO: input
+        -- TODO: input messages
         -- TODO: navigation and further key processing
         keys <- readIORef keysRef
         fromMaybe (return ()) $ Map.lookup key keys

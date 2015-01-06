@@ -1,12 +1,15 @@
+{-# LANGUAGE TypeFamilies #-}
 module Main where
 
+import Record (Record, EnumRecord)
 import System.Console.ANSI
 import Terminal.Figure
 import Terminal.Page
 import Terminal.Widget
 import Control.Applicative hiding (empty)
 
-data MenuOptions = Join | Host | Exit deriving (Eq, Ord)
+data MenuOptions = Join | Host | Exit deriving (Eq, Ord, Enum, Bounded)
+type instance Record MenuOptions = EnumRecord MenuOptions
 
 keyColor = (Vivid, Blue)
 headerColor = (Vivid, Red)
