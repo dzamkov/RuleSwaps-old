@@ -118,11 +118,12 @@ runDrawOp (String appr (x, y) str) st@(width, _, _) = do
     changeState st (width, (x, y), appr)
     putStr str
     return (width, (x + length str, y), appr)
-runDrawOp (Space back (x, y) wid) (width, oldPos, (oldB, oldF)) = do
-    changePosition width oldPos (x, y)
-    changeBackground oldB back
-    putStr $ replicate wid ' '
-    return (width, (x + wid, y), (back, oldF))
+runDrawOp (Space back (x, y) wid) st@(width, _, _) = do
+    changeState st (width, (x, y), (back, back))
+    putStr $ replicate wid '#'
+    return (width, (x + wid, y), (back, back))
+    -- Note: can't use real spaces because of an ugly visual bug in Windows
+    -- command line.
 
 -- | A procedure which draws something to the terminal.
 newtype Draw = Draw [DrawOp] deriving (Eq, Ord, Show)
