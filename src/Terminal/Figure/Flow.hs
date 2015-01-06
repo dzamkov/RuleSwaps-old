@@ -14,7 +14,7 @@ module Terminal.Figure.Flow (
 ) where
 
 import Prelude hiding (concat)
-import Stride
+import Delta
 import Terminal.Draw hiding (space)
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
@@ -133,7 +133,7 @@ newline = flow 0 0 withArea where
 concat :: (FigureLike f) => ComposeHint -> f Flow -> f Flow -> f Flow
 concat hint a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
     concat' a b = res where
-        (aL, bL) = (layoutS a, layoutS b)
+        (aL, bL) = (layoutD a, layoutD b)
         abL = (\aL bL -> FlowLayout {
             maxWidth = maxWidth aL + maxWidth bL,
             minWidth = max (minWidth aL) (minWidth bL),
@@ -143,16 +143,16 @@ concat hint a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
                     (bEndX, bEndY) = trialPlace bL bArea
                 in (bEndX, aEndY + bEndY) })
             <$> aL <*> bL
-        res = figureS abL $ funS withAll
+        res = figureD abL $ funD withAll
         withAll (aArea, back, (x, y)) = res where
-            (aDraw, aEnd) = break2S $ placeS a <*> pure (aArea, back, (x, y))
+            (aDraw, aEnd) = break2D $ placeD a <*> pure (aArea, back, (x, y))
             bContext = (\(aEndX, aEndY) ->
                     (aArea { indent = aEndX }, back, (x, aEndY + y)))
                 <$> aEnd
-            (bDraw, bEnd) = break2S $ placeS b <*> bContext
-            abEnd = checkS $ (\(_, aEndY) (bEndX, bEndY) ->
+            (bDraw, bEnd) = break2D $ placeD b <*> bContext
+            abEnd = checkD $ (\(_, aEndY) (bEndX, bEndY) ->
                 (bEndX, aEndY + bEndY)) <$> aEnd <*> bEnd
-            res = plex2S (plusS aDraw bDraw) abEnd
+            res = plex2D (plusD aDraw bDraw) abEnd
 
 -- | Concatenates two flowed figures.
 (+++) :: (FigureLike f) => f Flow -> f Flow -> f Flow

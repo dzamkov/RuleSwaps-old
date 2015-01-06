@@ -18,7 +18,7 @@ module Terminal.Widget (
     runWidget
 ) where
 
-import Stride
+import Delta
 import Terminal.Input
 import Terminal.Draw hiding (fill)
 import Terminal.Figure
@@ -164,10 +164,10 @@ data InstanceControl i a = InstanceControl {
     -- whether the selection stays within the widget.
     navigate :: Direction -> IO Bool,
 
-    -- Gets the stride of the figure used to display this widget since the
+    -- Gets the delta for the figure used to display this widget since the
     -- last call to this function. The parameter indicates whether any
     -- widget has focus.
-    figure :: IO (Stride (Bool -> Figure a)),
+    figure :: IO (Delta (Bool -> Figure a)),
 
     -- Notifies the widget that it is being destroyed/replaced. This causes
     -- the widget to free its owned keys, and possibly keyboard focus.
@@ -200,19 +200,19 @@ runWidget' global context controlRef widget = res widget where
                 childFigure <- figure childControl
                 return $ Compose $ Compose childFigure
             case figureCache of
-                Just cache -> return $ stay cache
+                Just cache -> return $ keep cache
                 Nothing -> do
                     childFigures <- traverseH childFigure children
-                    let result = funS (\anyFocus ->
+                    let result = funD (\anyFocus ->
                           Page.figure (page internal) $ Page.Context {
                             keys = if anyFocus
                                 then const Nothing
                                 else (Map.!) keys,
                             fill = \hole -> (getCompose $ getCompose $
                                 getHole hole childFigures) <*> pure anyFocus,
-                            selected = stay Nothing {- TODO -} })
+                            selected = keep Nothing {- TODO -} })
                     -- TODO: Indicate first-time drawing
-                    writeIORef figureRef $ Just $ end result
+                    writeIORef figureRef $ Just $ final result
                     return result
 
         -- Children
@@ -300,11 +300,11 @@ runWidget input output widget = do
         Just size' <- Size.size
         let size = (Size.width size', Size.height size')
         -- TODO: Support resizing
-        let drawS = fstS (placeS fig <*> pure (size, (0, 0)))
-        -- TODO: Strides
+        let drawD = fstD (placeD fig <*> pure (size, (0, 0)))
+        -- TODO: Delta
         replicateM_ (snd size) $ putStrLn ""
         cursorUp $ snd size
-        runDraw (end drawS) (fst size, (0, 0), defaultAppearance)
+        runDraw (final drawD) (fst size, (0, 0), defaultAppearance)
     redraw
     key <- getHiddenChar
     -- TODO: Respond to key

@@ -7,9 +7,9 @@ module Terminal.Figure.Core (
     Placement,
     Bonus,
     Figure (..),
-    figureS,
-    placeS,
-    layoutS,
+    figureD,
+    placeD,
+    layoutD,
     Axis (..),
     ComposeHint,
     FigureLike (..),
@@ -20,7 +20,7 @@ module Terminal.Figure.Core (
     testHeight
 ) where
 
-import Stride
+import Delta
 import Terminal.Draw
 import Control.Monad.Identity
 import Control.Applicative
@@ -47,34 +47,31 @@ data Figure a = Figure {
     -- | Provides placement information to a figure.
     place :: Placement a -> (Draw, Bonus a) }
 
-data CFigure a = CFigure (Stride (Layout a))
-    (Stride (Placement a -> (Draw, Bonus a)))
-type instance Complex (Figure a) = CFigure a
-instance IsStride (CFigure a) where
-    glue (CFigure a b) (CFigure c d) = CFigure (glue a c) (glue b d)
-instance StrideRel (CFigure a) (Figure a) where
-    start (CFigure l p) = Figure {
-        layout = start l,
-        place = start p }
-    end (CFigure l p) = Figure {
-        layout = end l,
-        place = end p }
+data DFigure a = DFigure (Delta (Layout a))
+    (Delta (Placement a -> (Draw, Bonus a)))
+type instance Complex (Figure a) = DFigure a
+instance DeltaRel (DFigure a) (Figure a) where
+    initial (DFigure l p) = (\l p -> Figure { layout = l, place = p })
+        <$> initial l <*> initial p
+    final (DFigure l p) = Figure {
+        layout = final l,
+        place = final p }
 
--- | Constructs a stride for a figure.
-figureS :: Stride (Layout a)
-    -> Stride (Placement a -> (Draw, Bonus a))
-    -> Stride (Figure a)
-figureS layout place = Complex $ CFigure layout place
+-- | Constructs a delta for a figure.
+figureD :: Delta (Layout a)
+    -> Delta (Placement a -> (Draw, Bonus a))
+    -> Delta (Figure a)
+figureD layout place = Complex $ DFigure layout place
 
--- | Extracts the layout from a stride of a figure.
-layoutS :: Stride (Figure a) -> Stride (Layout a)
-layoutS (Complex (CFigure sl _)) = sl
-layoutS s = layout <$> s
+-- | Extracts the layout from a delta of a figure.
+layoutD :: Delta (Figure a) -> Delta (Layout a)
+layoutD (Complex (DFigure sl _)) = sl
+layoutD s = layout <$> s
 
--- | Extracts the 'place' function from a stride of a figure.
-placeS :: Stride (Figure a) -> Stride (Placement a -> (Draw, Bonus a))
-placeS (Complex (CFigure _ sn)) = sn
-placeS s = place <$> s
+-- | Extracts the 'place' function from a delta of a figure.
+placeD :: Delta (Figure a) -> Delta (Placement a -> (Draw, Bonus a))
+placeD (Complex (DFigure _ sn)) = sn
+placeD s = place <$> s
 
 -- | Identifies an axis.
 data Axis
@@ -90,15 +87,15 @@ class FigureLike f where
 
     -- | Produces a figure-like from a composition of existing figure-likes.
     compose :: ComposeHint -> (forall g. (Applicative g)
-        => (forall a. f a -> g (Stride (Figure a)))
-        -> g (Stride (Figure b))) -> f b
+        => (forall a. f a -> g (Delta (Figure a)))
+        -> g (Delta (Figure b))) -> f b
 
 instance FigureLike Figure where
-    compose _ inner = start $ runIdentity $ inner (Identity . stay)
+    compose _ inner = final $ runIdentity $ inner (Identity . keep)
 
 -- | Converts a figure into a figure-like.
 generalize :: (FigureLike f) => Figure a -> f a
-generalize fig = compose Nothing (\_ -> pure $ stay fig)
+generalize fig = compose Nothing (\_ -> pure $ keep fig)
 
 -- | The layout type @a@ allows for empty figures which take up no space and
 -- involves no drawing.

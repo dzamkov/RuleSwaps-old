@@ -23,7 +23,7 @@ module Terminal.Draw (
     runDraw,
     none,
     (|%), (|%|),
-    plusS,
+    plusD,
     string,
     space,
     hline,
@@ -33,7 +33,7 @@ module Terminal.Draw (
     runDrawInline
 ) where
 
-import Stride
+import Delta
 import System.Console.ANSI
 import Data.Maybe (catMaybes, mapMaybe)
 import Control.Monad
@@ -125,13 +125,10 @@ runDrawOp (Space back (x, y) wid) (width, oldPos, (oldB, oldF)) = do
 
 -- | A procedure which draws something to the terminal.
 newtype Draw = Draw [DrawOp] deriving (Eq, Ord, Show)
-data SDraw = SDraw Draw Draw
-type instance Complex Draw = SDraw
-instance IsStride SDraw where
-    glue (SDraw i x) (SDraw _ y) = SDraw i (x |% y)
-instance StrideRel SDraw Draw where
-    start (SDraw i _) = i
-    end (SDraw i a) = i |% a
+data DDraw = DDraw Draw Draw
+type instance Complex Draw = DDraw
+instance DeltaRel DDraw Draw where
+    final (DDraw _ f) = f
 
 -- | Performs a drawing procedure on the current terminal.
 runDraw :: Draw -> State -> IO State
@@ -150,14 +147,14 @@ none = Draw []
 (|%|) :: Draw -> Draw -> Draw
 (|%|) = (|%)
 
--- | Combines two drawing operations within the context of a 'Stride', assuming
+-- | Combines two drawing operations within the context of a 'Delta', assuming
 -- that overlap is not possible
-plusS :: Stride Draw -> Stride Draw -> Stride Draw
-plusS (Stride xs xe) (Stay y) = Complex $ SDraw (xs |%| y) xe
-plusS (Stay x) (Stride ys ye) = Complex $ SDraw (ys |%| x) ye
-plusS (Complex (SDraw xs xd)) (Complex (SDraw ys yd)) =
-    Complex $ SDraw (xs |%| ys) (xd |%| yd)
-plusS x y = (|%|) <$> x <*> y
+plusD :: Delta Draw -> Delta Draw -> Delta Draw
+plusD (Keep x) dy = Complex $ DDraw (final dy) (x |%| final dy)
+plusD dx (Keep y) = Complex $ DDraw (final dx) (y |%| final dx)
+plusD (Complex (DDraw xa xf)) (Complex (DDraw ya yf)) =
+    Complex $ DDraw (xa |%| ya) (xf |%| yf)
+plusD x y = (|%|) <$> x <*> y
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw

@@ -27,7 +27,7 @@ module Terminal.Figure.Block (
     center
 ) where
 
-import Stride hiding (end)
+import Delta
 import Terminal.Draw
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
@@ -100,29 +100,29 @@ blockify :: (FigureLike f) => FullColor -> f Flow -> f (Block Dep)
 blockify back flow = compose hint (\eval -> blockify' <$> eval flow) where
     hint = Nothing
     blockify' flow = res where
-        flowL = layoutS flow
+        flowL = layoutD flow
         width' _ _ = undefined :: Width -- TODO: Binary search
         area width = FlowArea { width = width, indent = 0 }
         l = (\flowL spec -> case spec of
             (Left width) -> (width, 1 + snd (trialPlace flowL $ area width))
             (Right height) -> (width' flowL height, height)) <$> flowL
-        res = figureS l $ funS placed
+        res = figureD l $ funD placed
         placed (Left width, offset@(x, y)) = res where
-            (flowDraw, flowEnd) = break2S $ placeS flow <*>
+            (flowDraw, flowEnd) = break2D $ placeD flow <*>
                 pure (area width, back, offset)
             endSpace = (\(ex, ey) -> Draw.space back
                 (x + ex, y + ey) (width - ex)) <$> flowEnd
-            height = (+ 1) <$> sndS flowEnd
-            res = plex2S (plusS flowDraw endSpace) $ plex2S (pure width) height
+            height = (+ 1) <$> sndD flowEnd
+            res = plex2D (plusD flowDraw endSpace) $ plex2D (pure width) height
         placed (Right height, offset@(x, y)) = res where
             width = width' <$> flowL <*> pure height
-            (flowDraw, flowEnd) = break2S $ placeS flow <*>
+            (flowDraw, flowEnd) = break2D $ placeD flow <*>
                 ((\width -> (area width, back, offset)) <$> width)
             endSpace = (\width (ex, ey) -> Draw.space back
                 (x + ex, y + ey) (width - ex) |%|
                 Draw.fill back (x, y + ey + 1) width (height - ey - 1))
                 <$> width <*> flowEnd
-            res = plex2S (plusS flowDraw endSpace) $ plex2S width (pure height)
+            res = plex2D (plusD flowDraw endSpace) $ plex2D width (pure height)
 
 -- | Blocks of sizing type @s@ can be enclosed by constant- width and height
 -- borders resulting in blocks of sizing type @n@.
@@ -163,13 +163,13 @@ withBorder border block = compose h (\eval -> withBorder' <$> eval block) where
         padWidth = left + right
         padHeight = top + bottom
         (f, g) = transEnclose (undefined :: s) (padWidth, padHeight)
-        res = figureS (f <$> layoutS block) $ funS placed
+        res = figureD (f <$> layoutD block) $ funD placed
         placed (size, (x, y)) = res where
-            (drawInner, innerSize) = break2S $ placeS block <*>
+            (drawInner, innerSize) = break2D $ placeD block <*>
                 pure (g size, (x + left, y + top))
             fullSize = (\(w, h) -> (w + padWidth, h + padHeight)) <$> innerSize
             drawBorder = (\size -> drawBorder' size (x, y)) <$> fullSize
-            res = plex2S (plusS drawInner drawBorder) fullSize
+            res = plex2D (plusD drawInner drawBorder) fullSize
 
 -- | A 1-character-thick line border with the given appearance.
 lineBorder :: Appearance -> Border
@@ -228,9 +228,9 @@ instance CanDepSetSize p => CanSetSize p Dep (Ind Fix Fix) where
         h = Nothing
         setSize' block = res where
             place = pure $ depPlace (undefined :: Proxy p) size
-            size' = layoutS block <*> place
-            res = figureS size' $ funS $ \(_, offset) ->
-                (placeS block <*> plex2S place (pure offset))
+            size' = layoutD block <*> place
+            res = figureD size' $ funD $ \(_, offset) ->
+                (placeD block <*> plex2D place (pure offset))
 
 -- | Sets the width of a block.
 setWidth :: (FigureLike f, CanSetSize Horizontal s n)
@@ -253,24 +253,24 @@ instance CanCenter Horizontal (Ind Fix a) (Ind Vary a) where
     centerAxis _ block = compose h (\eval -> centerAxis' <$> eval block) where
         h = Nothing
         centerAxis' block = res where
-            layout = (\(_, v) -> ((), v)) <$> layoutS block
-            res = figureS layout $ funS placed
+            layout = (\(_, v) -> ((), v)) <$> layoutD block
+            res = figureD layout $ funD placed
             placed ((fw, v), (x, y)) = res where
-                (draw, size) = break2S $ placeS block <*>
+                (draw, size) = break2D $ placeD block <*>
                     ((\(iw, _) -> (((), v), (x + (fw - iw) `div` 2, y))) <$>
-                    layoutS block)
-                res = plex2S draw $ plex2S (pure fw) (sndS size)
+                    layoutD block)
+                res = plex2D draw $ plex2D (pure fw) (sndD size)
 instance CanCenter Vertical (Ind a Fix) (Ind a Vary) where
     centerAxis _ block = compose h (\eval -> centerAxis' <$> eval block) where
         h = Nothing
         centerAxis' block = res where
-            layout = (\(h, _) -> (h, ())) <$> layoutS block
-            res = figureS layout $ funS placed
+            layout = (\(h, _) -> (h, ())) <$> layoutD block
+            res = figureD layout $ funD placed
             placed ((h, fh), (x, y)) = res where
-                (draw, size) = break2S $ placeS block <*>
+                (draw, size) = break2D $ placeD block <*>
                     ((\(_, ih) -> ((h, ()), (x, y + (fh - ih) `div` 2))) <$>
-                    layoutS block)
-                res = plex2S draw $ plex2S (fstS size) (pure fh)
+                    layoutD block)
+                res = plex2D draw $ plex2D (fstD size) (pure fh)
 
 -- | Centers a block along the horizontal axis.
 hcenter :: (FigureLike f, CanCenter Horizontal s n)

@@ -24,7 +24,7 @@ module Terminal.Page (
     hole
 ) where
 
-import Stride
+import Delta
 import Terminal.Draw (FullColor)
 import Terminal.Figure
 import Data.Map (Map)
@@ -97,18 +97,18 @@ instance Holes Concrete where
 data WithHole h a f = WithHole (f a) (h f)
 -- TODO: Easy way of making hole-carrying structures.
 
--- | Contains the information needed to create a (stride of a) figure for a
+-- | Contains the information needed to create a (delta for a) figure for a
 -- page.
 data Context h k = Context {
 
     -- | The keys assigned to each option in the page.
     keys :: k -> Maybe Key,
 
-    -- | Gets the (stride for the) figure which will fill the given hole.
-    fill :: forall a. Hole h a -> Stride (Figure a),
+    -- | Gets the (delta for the) figure which will fill the given hole.
+    fill :: forall a. Hole h a -> Delta (Figure a),
 
     -- | Gets the currently selected option.
-    selected :: Stride (Maybe k) }
+    selected :: Delta (Maybe k) }
 
 -- | A figure-like which enables limited interactivity. It has several options
 -- which may be highlighted and selected, and has several "holes" which can
@@ -123,7 +123,7 @@ data Page h k a = Page {
     navigatree :: Maybe (NavigaTree h k),
 
     -- | Gets the figure for this page using the given context.
-    figure :: Context h k -> Stride (Figure a) }
+    figure :: Context h k -> Delta (Figure a) }
 
 instance Ord k => FigureLike (Page h k) where
     compose hint inner = toPage (inner evalInner) where
@@ -135,7 +135,7 @@ instance Ord k => FigureLike (Page h k) where
         toPage :: Compose
             (State (Map k [Key], [NavigaTree h k]))
             (Reader (Context h k))
-            (Stride (Figure a)) -> Page h k a
+            (Delta (Figure a)) -> Page h k a
         toPage (Compose state) = res where
             (reader, (s, t)) = runState state (Map.empty, [])
             axis = fromMaybe Horizontal hint
@@ -150,26 +150,26 @@ figureToPage = generalize
 
 -- | A possible highlight function for 'option' which sets the back color of
 -- a flow when selected.
-highlightFlow :: FullColor -> Stride Bool
-    -> Stride (Figure Flow) -> Stride (Figure Flow)
-highlightFlow back selected source = figureS (layoutS source) $
-    funS (\(area, normal, offset) ->
+highlightFlow :: FullColor -> Delta Bool
+    -> Delta (Figure Flow) -> Delta (Figure Flow)
+highlightFlow back selected source = figureD (layoutD source) $
+    funD (\(area, normal, offset) ->
             let back' True = back
                 back' False = normal
                 placement = (\s -> (area, back' s, offset)) <$> selected
-            in placeS source <*> placement)
+            in placeD source <*> placement)
 
 -- | Converts a page into an option, at the top level, by specifying an
 -- identifier, possible shortcut keys (in order of preference), and a function
 -- which highlights the figure.
 option :: (Ord k) => k -> [Key]
-    -> (Stride Bool -> Stride (Figure a) -> Stride (Figure a))
+    -> (Delta Bool -> Delta (Figure a) -> Delta (Figure a))
     -> Page h k a -> Page h k a
 option id keys decorate page = Page {
     shortcuts = Map.insert id keys $ shortcuts page,
     navigatree = Just $ Option id $ navigatree page,
     figure = \context -> decorate
-        (checkS $ (== Just id) <$> selected context)
+        (checkD $ (== Just id) <$> selected context)
         (figure page context) }
 
 -- | Creates a page which displays information about key assignments.
@@ -177,7 +177,7 @@ keyView :: ((k -> Maybe Key) -> Figure a) -> Page h k a
 keyView figure = Page {
     shortcuts = Map.empty,
     navigatree = Nothing,
-    figure = stay . figure . keys }
+    figure = keep . figure . keys }
 
 -- | Constructs a page for the given hole.
 hole :: Hole h a -> Page h k a
