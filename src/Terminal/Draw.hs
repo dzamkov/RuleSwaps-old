@@ -31,6 +31,7 @@ module Terminal.Draw (
     vline,
     fill,
     clip,
+    withAppearance,
     runDrawInline
 ) where
 
@@ -209,6 +210,12 @@ clip (left, top) width height (Draw ops) = res where
     clipOp (Space back (x, y) size) = Just $ Space back (max left x, y)
         (min (x + size) right - max left x)
     res = Draw $ mapMaybe clipOp ops
+
+-- | Overrides the appearance of a drawing operation. Useful for debugging
+withAppearance :: Appearance -> Draw -> Draw
+withAppearance appr (Draw ops) = Draw $ map f ops where
+    f (String _ offset str) = String appr offset str
+    f (Space _ offset wid) = Space (fst appr) offset wid
 
 -- | Performs a drawing operation on the current terminal within a REPL
 -- output section. This assumes that the origin of the drawing is at the top-
