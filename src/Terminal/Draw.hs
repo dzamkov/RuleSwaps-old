@@ -153,6 +153,7 @@ none = Draw []
 -- | Gets the drawing operation that must be performed to apply the given
 -- delta.
 paintD :: Delta Draw -> Draw
+paintD (Keep _) = none
 paintD (Complex (DDraw a _)) = a
 paintD dx = final dx
 
