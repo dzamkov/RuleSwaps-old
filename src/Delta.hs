@@ -2,7 +2,9 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE StandaloneDeriving #-}
 module Delta (
     Delta (..),
     keep,
@@ -41,6 +43,9 @@ data Delta a where
     -- initial and final values.
     Complex :: DeltaRel (Complex a) a => Complex a -> Delta a
 
+deriving instance (Eq a, Eq (Complex a)) => Eq (Delta a)
+deriving instance (Ord a, Ord (Complex a)) => Ord (Delta a)
+deriving instance (Show a, Show (Complex a)) => Show (Delta a)
 instance Functor Delta where
     fmap f (Keep x) = Keep (f x)
     fmap f (Set x) = Set (f x)
