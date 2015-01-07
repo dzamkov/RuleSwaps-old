@@ -3,7 +3,7 @@
 module Main where
 
 import System.Console.ANSI
-import Terminal.Widget
+import Terminal.Widget hiding (await)
 import qualified Terminal.UI as UI
 import Control.Monad (replicateM_)
 
