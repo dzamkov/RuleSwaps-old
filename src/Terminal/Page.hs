@@ -78,7 +78,7 @@ data Page h k a = Page {
     figure :: Context h k -> Delta (Figure a) }
 
 {-# ANN module "HLint: ignore Use ***" #-}
-instance Ord k => FigureLike (Page h k) where
+instance FigureLike (Page h k) where
     compose hint inner = toPage (inner evalInner) where
         evalInner page = Compose $
             modify (\(s, t) ->
@@ -98,7 +98,7 @@ instance Ord k => FigureLike (Page h k) where
                 figure = runReader reader }
 
 -- | Converts a figure into a static page.
-figureToPage :: (Ord k) => Figure a -> Page h k a
+figureToPage :: Figure a -> Page h k a
 figureToPage = generalize
 
 -- | A possible highlight function for 'option' which sets the back color of

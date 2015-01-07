@@ -7,9 +7,11 @@ module Terminal.Figure.Flow (
     FlowArea (..),
     tightText,
     space,
+    strongSpace,
     newline,
     (+++),
     (===),
+    (=====),
     text
 ) where
 
@@ -121,6 +123,21 @@ space size = res where
             0 -> Draw.none
             len -> Draw.space back (x + indent, y) len
 
+-- | A space which will not be shortened at line boundaries.
+strongSpace :: Int -> Figure Flow
+strongSpace 0 = empty
+strongSpace size = res where
+    res = flow size size withArea
+    withArea (FlowArea { .. }) = res where
+        endX = (indent + size) `mod` width
+        endY = (indent + size) `div` width
+        res = ((endX, endY), withContext)
+        withContext back (x, y) = if endY == 0
+            then Draw.space back (x + indent, y) size
+            else Draw.space back (x + indent, y) (width - indent) |%|
+                Draw.fill back (x, y) width (endY - 1) |%|
+                Draw.space back (x, y) endX
+
 -- | A flowed figure which forces a break.
 newline :: Figure Flow
 newline = flow 0 0 withArea where
@@ -161,6 +178,11 @@ concat hint a b = compose hint (\eval -> concat' <$> eval a <*> eval b) where
 -- | Concatenates two flowed figures vertically.
 (===) :: (FigureLike f) => f Flow -> f Flow -> f Flow
 (===) a = concat (Just Vertical) (a +++ generalize newline)
+
+-- | Concatenates two flowed figures vertically, and leaves a blank line in
+-- between.
+(=====) :: (FigureLike f) => f Flow -> f Flow -> f Flow
+(=====) x y = x === generalize empty === y
 
 -- | A flowed figure for text, with breaking spaces.
 text :: FullColor -> String -> Figure Flow
