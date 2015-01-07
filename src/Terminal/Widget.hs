@@ -193,7 +193,7 @@ runWidget' global context controlRef = res where
                 Record.fromList $ shortcuts $ page internal
         keys <- allocKeys global keys'
         let onKey = process . Select -- TODO: highlight instead of select
-        let destroyThis = freeKeys global $ catMaybes $ Record.elems keys
+        let freeKeysThis = freeKeys global $ catMaybes $ Record.elems keys
 
         -- Drawing
         figureRef <- newIORef (Left True)
@@ -240,6 +240,13 @@ runWidget' global context controlRef = res where
                 runWidget' global childContext childControlRef child
                 return $ Compose childControlRef
         children <- Record.traverse1 setupChild $ holes internal
+        let destroyChildren = do
+            let destroyChild childControlRef = do
+                childControl <- readIORef $ getCompose childControlRef
+                destroy childControl
+                return childControlRef
+            Record.traverse1 destroyChild children
+            return ()
 
         -- Programmability
         let interpret :: ProgramView
@@ -272,6 +279,9 @@ runWidget' global context controlRef = res where
         contRef <- newIORef undefined
 
         -- Setup control interface
+        let destroyThis = do
+            freeKeysThis
+            destroyChildren
         writeIORef controlRef InstanceControl {
             receive = process . ReceiveParent,
             navigate = undefined, -- TODO: navigation
