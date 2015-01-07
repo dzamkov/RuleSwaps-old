@@ -12,6 +12,7 @@ module Terminal.Page (
     figureToPage,
     highlightFlow,
     option,
+    keysViewD,
     keyView,
     hole
 ) where
@@ -55,14 +56,11 @@ navigate _ NavigaCursor = undefined -- TODO
 -- page.
 data Context (h :: * -> *) k = Context {
 
-    -- | The keys assigned to each option in the page.
-    keys :: k -> Maybe Key,
+    -- | Gets the key assigned to the given option and whether it is selected.
+    getOption :: k -> Delta (Maybe Key, Bool),
 
     -- | Gets the (delta for the) figure which will fill the given hole.
-    fill :: forall a. h a -> Delta (Figure a),
-
-    -- | Gets the currently selected option.
-    selected :: Delta (Maybe k) }
+    getHole :: forall a. h a -> Delta (Figure a) }
 
 -- | A figure-like which enables limited interactivity. It has several options
 -- which may be highlighted and selected, and has several "holes" which can
@@ -117,26 +115,30 @@ highlightFlow back selected source = figureD (layoutD source) $
 -- | Converts a page into an option, at the top level, by specifying an
 -- identifier, possible shortcut keys (in order of preference), and a function
 -- which highlights the figure.
-option :: (Ord k) => k -> [Key]
+option :: k -> [Key]
     -> (Delta Bool -> Delta (Figure a) -> Delta (Figure a))
     -> Page h k a -> Page h k a
 option id keys decorate page = Page {
     shortcuts = (id, keys) : shortcuts page,
     navigatree = Just $ Option id $ navigatree page,
     figure = \context -> decorate
-        (checkD $ (== Just id) <$> selected context)
+        (sndD $ getOption context id)
         (figure page context) }
 
 -- | Creates a page which displays information about key assignments.
-keyView :: ((k -> Maybe Key) -> Figure a) -> Page h k a
-keyView figure = Page {
+keysViewD :: ((k -> Delta (Maybe Key)) -> Delta (Figure a)) -> Page h k a
+keysViewD figure = Page {
     shortcuts = [],
     navigatree = Nothing,
-    figure = keep . figure . keys }
+    figure = \context -> figure (fstD . getOption context) }
+
+-- | Creates a page which displays information about a single key assignment.
+keyView :: k -> (Maybe Key -> Figure a) -> Page h k a
+keyView id figure = keysViewD (\getKey -> pure figure <*> getKey id)
 
 -- | Constructs a page for the given hole.
 hole :: h a -> Page h k a
 hole hole = Page {
     shortcuts = [],
     navigatree = Just $ Hole hole,
-    figure = (`fill` hole) }
+    figure = (`getHole` hole) }

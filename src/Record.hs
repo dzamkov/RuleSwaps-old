@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -17,6 +18,7 @@ module Record (
     HasRecord,
     map,
     fromList,
+    prefFromList,
     toList,
     elems,
     Empty,
@@ -71,6 +73,11 @@ map = fmap
 fromList :: (RecordRel r n) => [(n, a)] -> r a
 fromList = foldl' (\a (n, v) -> set n v a) $
     gen (const $ error "fromList: some names not covered")
+
+-- | Constructs a record from a list using the prefered record type for the
+-- given name type.
+prefFromList :: (HasRecord n) => [(n, a)] -> Record n a
+prefFromList = fromList
 
 -- | Converts a record into a list.
 toList :: (RecordRel r n) => r a -> [(n, a)]

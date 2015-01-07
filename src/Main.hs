@@ -20,7 +20,7 @@ menuBorder = (Dull, White)
 menuBack = (Vivid, White)
 
 menuOption id keys name = res where
-    view = keyView (\keys -> case keys id of
+    view = keyView id (\key -> case key of
         Just key -> tightText keyColor ('[' : key : ']' : []) +++ space 1
         Nothing -> empty)
     space' = figureToPage . space

@@ -19,7 +19,7 @@ module Terminal.Widget (
 ) where
 
 import Delta
-import Record (Record, HasRecord, RecordRel1, Void1)
+import Record (HasRecord, RecordRel1, Void1)
 import qualified Record
 import Terminal.Input
 import Terminal.Draw hiding (fill)
@@ -170,7 +170,7 @@ data InstanceControl i a = InstanceControl {
     -- Gets the delta for the figure used to display this widget since the
     -- last call to this function. The parameter indicates whether any
     -- widget has focus.
-    figure :: IO (Delta (Bool -> Figure a)),
+    figure :: Delta Bool -> IO (Delta (Figure a)),
 
     -- Notifies the widget that it is being destroyed/replaced. This causes
     -- the widget to free its owned keys, and possibly keyboard focus.
@@ -188,39 +188,40 @@ runWidget' global context controlRef = res where
     runInternal internal = mdo
 
         -- Shortcuts
-        let keys' :: Record k (IO (), [Key])
-            keys' = Record.mapWithName (\name keys -> (onKey name, keys)) $
-                Record.fromList $ shortcuts $ page internal
-        keys <- allocKeys global keys'
+        keys <- allocKeys global $
+            Record.mapWithName (\name keys -> (onKey name, keys)) $
+            Record.prefFromList $ shortcuts $ page internal
         let onKey = process . Select -- TODO: highlight instead of select
         let freeKeysThis = freeKeys global $ catMaybes $ Record.elems keys
 
         -- Drawing
         figureRef <- newIORef (Left True)
-        let figureThis = do
+        let figureThis anyFocus = do
             figureCache <- readIORef figureRef
-            let childFigure childControlRef = do
-                childControl <- readIORef $ getCompose childControlRef
-                childFigure <- figure childControl
-                return $ Compose $ Compose childFigure
-            case figureCache of
-                (Right cache) -> return $ keep cache
-                (Left firstTime) -> do
-                    childFigures <- Record.traverse1 childFigure children
-                    let result' = funD (\anyFocus ->
-                          Page.figure (page internal) Page.Context {
-                            keys = if anyFocus
-                                then const Nothing
-                                else (`Record.get` keys),
-                            fill = \hole -> getCompose
-                                (getCompose $ Record.get1 hole childFigures)
-                                <*> pure anyFocus,
-                            selected = keep Nothing {- TODO -} })
-                    let result = if firstTime
-                          then set (final result')
-                          else result'
-                    writeIORef figureRef $ Right $ final result
-                    return result
+            let childFigure :: forall b.
+                    Compose IORef (InstanceControl i') b
+                    -> IO (Compose Delta Figure b)
+                childFigure childControlRef = do
+                    childControl <- readIORef $ getCompose childControlRef
+                    childFigure <- figure childControl anyFocus
+                    return $ Compose childFigure
+            let finalFigure = do
+                childFigures <- Record.traverse1 childFigure children
+                let options = Record.map (\key ->
+                      plex2D (keep key) (keep False)) keys
+                let context = Page.Context {
+                    getOption = (`Record.get` options),
+                    getHole = \hole -> getCompose $
+                        Record.get1 hole childFigures }
+                let result = Page.figure (page internal) context
+                writeIORef figureRef $ Right $ final result
+                return result
+            case (anyFocus, figureCache) of
+                (Keep _, Right cache) -> return $ keep cache
+                (_, Right _) -> finalFigure
+                (_, Left firstTime) -> do
+                    result <- finalFigure
+                    return $ if firstTime then set (final result) else result
         let redrawThis = do
             figureCache <- readIORef figureRef
             case figureCache of
@@ -325,7 +326,7 @@ runWidget _ output widget = do
     sizeRef <- newIORef initialSize
     let getDraw sizeD = do
         control <- readIORef controlRef
-        fig <- (<*> pure False) <$> figure control
+        fig <- figure control (pure False)
         return $ fstD (placeD fig <*> plex2D sizeD (pure (0, 0)))
     let initialHeight = snd initialSize
     replicateM_ initialHeight $ putStrLn ""
