@@ -8,8 +8,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE ViewPatterns #-}
 module Actor (
-    Output,
-    Input,
+    Channel,
     Event,
     mapEvent,
     (<>),
@@ -35,35 +34,37 @@ import Control.Monad.IO.Class
 import Control.Monad (void, when, unless)
 import Control.Applicative
 
--- | The sending end of a channel within the context of an 'ActorT'.
-type family Output r :: * -> *
+-- | A communication channel for an 'ActorT'.
+type family Channel r :: * -> *
 
--- | The receiving end of a channel within the context of an 'ActorT'.
-type family Input r :: * -> *
+-- | An event triggered by a single channel.
+data ChannelEvent r a = forall b. ChannelEvent (Channel r b) (b -> a)
 
--- | An input paired with a mapping function.
-data MappedInput r a = forall b. MappedInput (Input r b) (b -> a)
-
--- | A set of inputs, each mapped to produce a consistent type. When waiting
--- on an event, a single result from one of the inputs will be taken and
--- returned.
-newtype Event r a = Event [MappedInput r a] deriving (Monoid)
+-- | A set of receive-only channels, each mapped to produce a consistent type.
+-- When waiting on an event, a single message from one of the channels will be
+-- taken and returned.
+newtype Event r a = Event [ChannelEvent r a] deriving (Monoid)
 instance Functor (Event r) where
     fmap = mapEvent
+
+-- | Constructs an event for a channel. The event will fire when a message is
+-- received, and the message will be removed from the channel.
+event :: Channel r a -> Event r a
+event channel = Event [ChannelEvent channel id]
 
 -- | Maps the result of an event.
 mapEvent :: (a -> b) -> Event r a -> Event r b
 mapEvent f (Event inputs) = Event $
-    map (\(MappedInput i g) -> MappedInput i (f . g)) inputs
+    map (\(ChannelEvent i g) -> ChannelEvent i (f . g)) inputs
 
 -- | A primitive instruction for an actor.
 data ActorInstr r m a where
 
     -- | Creates a new channel.
-    Spawn :: ActorInstr r m (Output r a, Input r a)
+    Spawn :: ActorInstr r m (Channel r a)
 
     -- | Sends a message on a channel.
-    Send :: Output r a -> a -> ActorInstr r m ()
+    Send :: Channel r a -> a -> ActorInstr r m ()
 
     -- | Awaits an event.
     Await :: Event r a -> ActorInstr r m a
@@ -89,15 +90,13 @@ type Actor r = ActorT r Identity
 -- is possible.
 class Monad m => MonadActor r m | m -> r where
 
-    -- | Creates a new channel, returning an output to send messages and an
-    -- event to receive messages. Every message sent to the output will be
-    -- received exactly once, provided that the channel 'await'ed.
-    spawn :: m (Output r a, Event r a)
+    -- | Creates a new communication channel.
+    spawn :: m (Channel r a)
 
     -- | Sends a message on a channel.
-    send :: Output r a -> a -> m ()
+    send :: Channel r a -> a -> m ()
 
-    -- | Awaits an event, which is composed of many channel inputs. Execution
+    -- | Awaits an event, which is composed of many channels. Execution
     -- will not continue until a message is received on one of the channels.
     await :: Event r a -> m a
 
@@ -105,14 +104,13 @@ class Monad m => MonadActor r m | m -> r where
     fork :: m a -> m (Event r a)
 
 instance Monad m => MonadActor r (ActorT r m) where
-    spawn = (\(o, i) -> (o, Event [MappedInput i id])) <$>
-        (ActorT $ singleton Spawn)
+    spawn = ActorT $ singleton Spawn
     send output msg = ActorT $ singleton $ Send output msg
     await = ActorT . singleton . Await
     fork child = do
-        (output, event) <- spawn
-        ActorT $ singleton $ Fork (child >>= send output)
-        return event
+        done <- spawn
+        ActorT $ singleton $ Fork (child >>= send done)
+        return (event done)
 
 -- | Similar to 'IO', but tracks whether procedures are long or blocking.
 data QIO a = QIO Bool (IO a)
@@ -148,8 +146,7 @@ data IOContext
 -- messages. Some handlers may not be willing to accept the message, returning
 -- false.
 newtype IOChannel a = IOChannel (IORef (Either (a, [a]) [a -> IO Bool]))
-type instance Input IOContext = IOChannel
-type instance Output IOContext = IOChannel
+type instance Channel IOContext = IOChannel
 
 -- | Creates a new channel.
 newChannel :: IO (IOChannel a)
@@ -172,7 +169,7 @@ sendChannel channel@(IOChannel ref) msg = do
 -- with a parameter indicating if this procedure may block.
 awaitIO :: Event IOContext a -> Bool -> (a -> ActorT IOContext QIO b) -> IO ()
 awaitIO (Event inputs) blocking cont = res where
-    processInput handle (MappedInput (IOChannel ref) f) =
+    processInput handle (ChannelEvent (IOChannel ref) f) =
         atomicModifyIORef ref (\state -> case state of
             Left (head, tail) ->
                 let nState = case tail of
@@ -215,7 +212,7 @@ runActorIO' blocking (ActorT (viewT -> next)) = res where
     process _ (Return _) = return ()
     process blocking (Spawn :>>= cont) = do
         channel <- newChannel
-        runActorIO' blocking $ ActorT $ cont (channel, channel)
+        runActorIO' blocking $ ActorT $ cont channel
     process blocking (Send output msg :>>= cont) = do
         sendChannel output msg
         runActorIO' blocking $ ActorT $ cont ()
