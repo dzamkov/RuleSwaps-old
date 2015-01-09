@@ -254,5 +254,5 @@ startActorIO (ActorT (viewT -> next)) = next >>= process where
     process (Await source :>>= cont) =
         awaitIO source (ActorT . cont)
     process (Fork child :>>= cont) = do
-        startActorIO $ ActorT $ cont ()
         startActorIO child
+        startActorIO $ ActorT $ cont ()

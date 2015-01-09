@@ -12,9 +12,9 @@ import Foreign.C.Types
 getHiddenChar :: IO Char
 #ifdef mingw32_HOST_OS
 getHiddenChar = fmap (chr.fromEnum) c_getch
-foreign import ccall unsafe "conio.h _getch" c_getch :: IO CInt
+foreign import ccall safe "conio.h _getch" c_getch :: IO CInt
 #else
 getHiddenChar = do
     IO.hSetEcho IO.stdin False
-    IO.hGetChar IO.stdin
+    IO.getChar
 #endif
