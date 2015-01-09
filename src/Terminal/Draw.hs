@@ -37,6 +37,7 @@ module Terminal.Draw (
 
 import Delta
 import System.Console.ANSI
+import System.IO (hFlush, stdout)
 import Data.Maybe (catMaybes, mapMaybe)
 import Control.Monad
 import Control.Applicative
@@ -134,7 +135,10 @@ instance DeltaRel DDraw Draw where
 
 -- | Performs a drawing procedure on the current terminal.
 runDraw :: Draw -> State -> IO State
-runDraw (Draw ops) st = foldM (flip runDrawOp) st ops
+runDraw (Draw ops) st = do
+    nSt <- foldM (flip runDrawOp) st ops
+    hFlush stdout
+    return nSt
 
 -- | Does no drawing.
 none :: Draw
