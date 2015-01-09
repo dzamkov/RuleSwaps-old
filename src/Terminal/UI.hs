@@ -4,15 +4,16 @@
 module Terminal.UI (
     Style (..),
     casino,
+    MainContext (..),
     main
 ) where
 
+import Actor
 import Record (Record, EnumRecord)
 import Terminal.Draw (Color (..), ColorIntensity (..), FullColor)
 import Terminal.Figure
-import Terminal.Page
+import Terminal.Page hiding (Context)
 import Terminal.Widget
-import Data.Void
 
 -- | Contains styling information for the user interface.
 data Style = Style {
@@ -69,20 +70,33 @@ button id keys name = res where
 data MenuOption = Join | Host | Exit deriving (Eq, Ord, Enum, Bounded)
 type instance Record MenuOption = EnumRecord MenuOption
 
+-- | The context information needed by the UI when there is no active game.
+data MainContext r = MainContext {
+
+    -- | Exits the program.
+    exit :: Actor r () }
+
 -- | The widget for the entire user interface.
 {-# ANN module "HLint: ignore Use string literal" #-}
-main :: (?style :: Style) => Widget Void MenuOption (Block (Ind Vary Vary))
-main = pageToWidget $
-    center $
-    pad (screenBack ?style) (5, 5, 5, 5) $
-    withBorder (floatBorder ?style) $
-    pad (floatBack ?style) (2, 2, 2, 2) $
-    setWidth 12 $
-    blockify (floatBack ?style)
-        (header "RuleSwaps"
-        =====
-        button Join ['j'] "Join"
-        ===
-        button Host ['h'] "Host"
-        ===
-        button Exit ['e'] "Exit")
+main :: (?style :: Style) => MainContext r -> Widget r (Block (Ind Vary Vary))
+main (MainContext { .. }) = res where
+    page = center $
+        pad (screenBack ?style) (5, 5, 5, 5) $
+        withBorder (floatBorder ?style) $
+        pad (floatBack ?style) (2, 2, 2, 2) $
+        setWidth 12 $
+        blockify (floatBack ?style)
+            (header "RuleSwaps"
+            =====
+            button Join ['j'] "Join"
+            ===
+            button Host ['h'] "Host"
+            ===
+            button Exit ['e'] "Exit")
+    actor (Context { .. }) = do
+        option <- await select
+        case option of
+            Join -> undefined -- TODO
+            Host -> undefined -- TODO
+            Exit -> exit >> return res
+    res = widgetSimple page actor

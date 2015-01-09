@@ -2,15 +2,20 @@
 {-# LANGUAGE ImplicitParams #-}
 module Main where
 
+import Actor
 import System.Console.ANSI
-import Terminal.Widget hiding (await)
+import Terminal.Widget
 import qualified Terminal.UI as UI
 import Control.Monad (replicateM_)
 
 main :: IO ()
-main =
+main = runActorIO $ do
+    exitChan <- spawn
+    (global, inst) <- startTerminal $ source exitChan
     let ?style = UI.casino
-    in runWidget undefined undefined UI.main
+    let context = UI.MainContext {
+        UI.exit = yield exitChan () }
+    liftActor $ runWidget global inst $ UI.main context
 
 reset :: IO ()
 reset = do

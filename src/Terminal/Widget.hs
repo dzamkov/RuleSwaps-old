@@ -2,351 +2,368 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RecordWildCards #-}
 module Terminal.Widget (
-    Event (..),
-    await,
-    replace,
-    sendParent,
-    sendChild,
+    Context (..),
     Widget (..),
-    pageToWidget,
-    mapFilterAll,
-    mapFilterInput,
-    mapFilterOutput,
-    runWidget
+    widget,
+    widgetSimple,
+    joinWidget,
+    GlobalContext (..),
+    InstanceContext (..),
+    runWidget,
+    startTerminal
 ) where
 
+import Actor
 import Delta
 import Record (HasRecord, RecordRel1, Void1)
 import qualified Record
 import Terminal.Input
 import Terminal.Draw hiding (fill)
 import Terminal.Figure
-import Terminal.Page hiding (Left, Right, figure, navigate)
+import Terminal.Page (Page, Direction, Key)
 import qualified Terminal.Page as Page
 import Data.Functor.Compose
-import Data.Void
 import Data.Traversable
-import Data.IORef
 import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Map as Map
+import System.Console.ANSI (setSGR, SGR (Reset))
 import qualified System.Console.Terminal.Size as Size
-import Control.Monad.Operational
+import Control.Monad.Trans
 import Control.Monad.State (runState, get, put)
-import Control.Monad (forever, replicateM_)
+import Control.Monad (when, unless, replicateM_)
 import Control.Applicative
 
--- | Identifies an event a widget can respond to.
-data Event i o' k
-    = Select k
-    | ReceiveParent i
-    | ReceiveChild o'
+-- | Provides context for a widget's actor.
+data Context r k = Context {
 
--- | An instruction that can be performed by a widget.
-data WidgetInstr i o i' o' h k a where
-    Await :: WidgetInstr i o i' o' h k (Event i o' k)
-    Replace :: h a -> Widget i' o' a -> WidgetInstr i o i' o' h k ()
-    SendParent :: o -> WidgetInstr i o i' o' h k ()
-    SendChild :: i' -> WidgetInstr i o i' o' h k ()
+    -- | A source that is triggered whenever an option on the widget is
+    -- selected.
+    select :: Source r k,
 
--- | Awaits an event.
-await :: Program (WidgetInstr i o i' o' h k) (Event i o' k)
-await = singleton Await
-
--- | Replaces the contents of a hole with the given widget.
-replace :: h a -> Widget i' o' a -> Program (WidgetInstr i o i' o' h k) ()
-replace hole = singleton . Replace hole
-
--- | Sends a message to the parent widget.
-sendParent :: o -> Program (WidgetInstr i o i' o' h k) ()
-sendParent = singleton . SendParent
-
--- | Sends a message to the child widget.
-sendChild :: i' -> Program (WidgetInstr i o i' o' h k) ()
-sendChild = singleton . SendChild
+    -- | An source that is triggered when the widget is destroyed.
+    destroy :: Source r () }
 
 -- | Contains the internal information for a widget.
-data Internal i o i' o' rh h k a = Internal {
+data Internal r rh h k a = Internal {
 
     -- | The immutable page for this widget.
     page :: Page h k a,
 
     -- | The initial child widgets to fill the holes for the widget.
-    holes :: rh (Widget i' o'),
+    holes :: rh (Widget r),
 
-    -- | The program that implements the logic for this widget. When the
-    -- program finishes, the widget will be replaced by the returned widget.
-    program :: Program (WidgetInstr i o i' o' h k) (Widget i o a) }
+    -- | The actor which runs while the widget is instantiated. When the
+    -- actor terminates, the widget will be replaced by the result.
+    actor :: Context r k -> Actor r (Widget r a) }
+
+-- | 'Internal', with existentially-quantified type variables.
+data AnyInternal r a = forall rh h k. (RecordRel1 rh h, HasRecord k)
+    => AnyInternal (Internal r rh h k a)
 
 -- | A figure-like which enables stateful interactivity.
-data Widget i o a = forall i' o' rh h k. (RecordRel1 rh h, HasRecord k)
-    => Widget (Internal i o i' o' rh h k a)
+data Widget r a = Widget (Actor r (AnyInternal r a))
 
--- | Converts a concrete page into a simple widget which emits an event when
--- an option is selected.
-pageToWidget :: (HasRecord k) => Page Void1 k a -> Widget Void k a
-pageToWidget page = Widget Internal {
-    page = page,
-    holes = Record.gen1 undefined,
-    program = forever $ do
-        event <- await
-        case event of
-            Select option -> sendParent option
-            _ -> undefined }
+-- | Constructs a widget.
+widget :: (RecordRel1 rh h, HasRecord k)
+    => Page h k a -- ^ The page the widget is based on
+    -> rh (Widget r) -- ^ The initial children for the widget
+    -> (Context r k -> Actor r (Widget r a)) -- ^ The program for the widget
+    -> Widget r a
+widget page holes actor = Widget $ return $ AnyInternal Internal { .. }
 
--- | Maps and filters the messages from and to a widget.
-mapFilterAll :: (i -> Maybe ni) -> (o -> Maybe no)
-    -> Widget ni o a -> Widget i no a
-mapFilterAll f g (Widget internal) = res where
-    nProgram = interpretWithMonad (\instr -> case instr of
-        Await ->
-            let awaitGood = do
-                event <- await
-                case event of
-                    Select option -> return (Select option)
-                    ReceiveParent input -> case f input of
-                        Just nInput -> return (ReceiveParent nInput)
-                        Nothing -> awaitGood
-                    ReceiveChild msg -> return (ReceiveChild msg)
-            in awaitGood
-        Replace hole widget -> replace hole widget
-        SendParent output -> case g output of
-            Just nOutput -> sendParent nOutput
-            Nothing -> return ()
-        SendChild msg -> sendChild msg) $ program internal
-    res = Widget Internal {
-        page = page internal,
-        holes = holes internal,
-        program = fmap (mapFilterAll f g) nProgram }
+-- | Constructs a widget with no child widgets.
+widgetSimple :: (HasRecord k)
+    => Page Void1 k a -- ^ The page the widget is based on
+    -> (Context r k -> Actor r (Widget r a)) -- ^ The program for the widget
+    -> Widget r a
+widgetSimple page = widget page (Record.gen1 undefined)
 
--- | Maps and filters the input to a widget.
-mapFilterInput :: (i -> Maybe n) -> Widget n o a -> Widget i o a
-mapFilterInput f = mapFilterAll f Just
+-- | Converts an actor that produces a widget into a widget. The actor will
+-- be run every time the widget is instantiated.
+joinWidget :: Actor r (Widget r a) -> Widget r a
+joinWidget builder = Widget (builder >>= (\(Widget w) -> w))
 
--- | Maps and filters the output from a widget.
-mapFilterOutput :: (o -> Maybe n) -> Widget i o a -> Widget i n a
-mapFilterOutput = mapFilterAll Just
+-- | The context information that is shared by all running widgets for a
+-- terminal.
+data GlobalContext r = GlobalContext {
 
-
--- | The procedures needed to run a widget that is shared by all running
--- widgets.
-data GlobalContext = GlobalContext {
-
-    -- | Request keys. Each request consists of a procedure, to be called
-    -- when the key is pressed, and a list of possible keys, ordered by
-    -- preference. The actual key assignments are returned.
+    -- | Requests assignable keys. Each request consists of a procedure, to
+    -- be called when the key is pressed, and a list of possible keys, ordered
+    -- by preference. The actual key assignments are returned.
     allocKeys :: forall t. (Traversable t)
-        => t (IO (), [Key]) -> IO (t (Maybe Key)),
+        => t (Actor r (), [Key]) -> Actor r (t (Maybe Key)),
 
-    -- | Free assigned keys, so that they may be assigned to other widgets.
-    freeKeys :: [Key] -> IO (),
+    -- | Frees assigned keys so that they may be assigned to other widgets.
+    freeKeys :: [Key] -> Actor r () }
 
-    -- | Requests keyboard focus. The procedure to process key input is
-    -- given. If successful, the procedure to release focus is returned.
-    focus :: (Char -> IO ()) -> IO (Maybe (IO ())) }
+-- | The context information needed to run a specific widget.
+data InstanceContext r a = InstanceContext {
 
--- | The procedures needed to run a widget.
-data InstanceContext o = InstanceContext {
+    -- | Requests a redraw.
+    redraw :: Actor r (),
 
-    -- | Sends an output message.
-    send :: o -> IO (),
+    -- | A source that is triggered when selection changes into or within the
+    -- widget. A response of whether selection remains in the widget is
+    -- expected.
+    navigate :: Source r (Direction, Bool -> Actor r ()),
 
-    -- | Requests redraw. This will be called when the widget is
-    -- instantiated.
-    redraw :: IO () }
+    -- | A source that is triggered when the widget is being redraw. The
+    -- parameter indicates whether any widget has focus. A response of the
+    -- figure is expected. All deltas are since the last draw.
+    draw :: Source r (Delta Bool, Delta (Figure a) -> Actor r ()),
 
--- | The control procedures provided by a running widget.
-data InstanceControl i a = InstanceControl {
+    -- | A source that is triggered when the widget is about to be destroyed.
+    -- This should cause the widget to free its assigned keys and release focus
+    -- if it has it.
+    destroyInst :: Source r () }
 
-    -- | Receives an input message.
-    receive :: i -> IO (),
+-- | Contains information that can be used to provide an 'InstanceContext'.
+data InstanceControl r a = InstanceControl {
 
-    -- Notifies of a change of selection into or within the widget. Returns
-    -- whether the selection stays within the widget.
-    navigate :: Direction -> IO Bool,
+    -- | Channel for 'draw'.
+    drawChan :: Channel r (Delta Bool, Delta (Figure a) -> Actor r ()),
 
-    -- Gets the delta for the figure used to display this widget since the
-    -- last call to this function. The parameter indicates whether any
-    -- widget has focus.
-    figure :: Delta Bool -> IO (Delta (Figure a)),
+    -- | Channel for 'destroyInst'.
+    destroyInstChan :: Channel r () }
 
-    -- Notifies the widget that it is being destroyed/replaced. This causes
-    -- the widget to free its owned keys, and possibly keyboard focus.
-    destroy :: IO () }
+-- | Runs a widget using the given context information. The resulting actor
+-- will never terminate.
+runWidget :: forall r a. GlobalContext r -> InstanceContext r a
+    -> Widget r a -> Actor r ()
+runWidget global inst (Widget builder) = do
 
--- | The internal implementation of 'runWidget'.
-runWidget' :: forall i o a. GlobalContext
-    -> InstanceContext o
-    -> IORef (InstanceControl i a)
-    -> Widget i o a -> IO ()
-runWidget' global context controlRef = res where
-    res (Widget internal) = runInternal internal
-    runInternal :: forall i' o' rh h k. (RecordRel1 rh h, HasRecord k)
-        => Internal i o i' o' rh h k a -> IO ()
-    runInternal internal = mdo
+    -- Instantiate
+    AnyInternal internal <- builder
 
-        -- Shortcuts
-        keys <- allocKeys global $
-            Record.mapWithName (\name keys -> (onKey name, keys)) $
-            Record.prefFromList $ shortcuts $ page internal
-        let onKey = process . Select -- TODO: highlight instead of select
-        let freeKeysThis = freeKeys global $ catMaybes $ Record.elems keys
+    -- Allocate keys
+    selectChan <- spawn
+    keyAssignments <- allocKeys global $
+        Record.mapWithName (\name keys -> (yield selectChan name, keys)) $
+        Record.prefFromList $ Page.shortcuts $ page internal
 
-        -- Drawing
-        figureRef <- newIORef (Left True)
-        let figureThis anyFocus = do
-            figureCache <- readIORef figureRef
-            let childFigure :: forall b.
-                    Compose IORef (InstanceControl i') b
-                    -> IO (Compose Delta Figure b)
-                childFigure childControlRef = do
-                    childControl <- readIORef $ getCompose childControlRef
-                    childFigure <- figure childControl anyFocus
-                    return $ Compose childFigure
-            let finalFigure = do
-                childFigures <- Record.traverse1 childFigure children
-                let options = Record.map (\key ->
-                      plex2D (keep key) (keep False)) keys
-                let context = Page.Context {
-                    getOption = (`Record.get` options),
-                    getHole = \hole -> getCompose $
-                        Record.get1 hole childFigures }
-                let result = Page.figure (page internal) context
-                writeIORef figureRef $ Right $ final result
-                return result
-            case (anyFocus, figureCache) of
-                (Keep _, Right cache) -> return $ keep cache
-                (_, Right _) -> finalFigure
-                (_, Left firstTime) -> do
-                    result <- finalFigure
-                    return $ if firstTime then set (final result) else result
-        let redrawThis = do
-            figureCache <- readIORef figureRef
-            case figureCache of
-                Right _ -> do
-                    writeIORef figureRef $ Left False
-                    redraw context
-                _ -> return ()
+    -- Run children
+    invalidateChan <- spawn
+    let setupChild :: forall b. Widget r b -> Actor r (InstanceControl r b)
+        setupChild child = do
+            drawChan <- spawn
+            destroyInstChan <- spawn
+            let childInst = InstanceContext {
+                redraw = yield invalidateChan (),
+                navigate = undefined, -- TODO: navigation
+                draw = source drawChan,
+                destroyInst = source destroyInstChan }
+            fork $ runWidget global childInst child
+            return InstanceControl { .. }
+    childControls <- Record.traverse1 setupChild $ holes internal
 
-        -- Children
-        let childContext = InstanceContext {
-            send = process . ReceiveChild,
-            redraw = redrawThis }
-        let setupChild :: forall b. Widget i' o' b
-                -> IO (Compose IORef (InstanceControl i') b)
-            setupChild child = do
-                childControlRef <- newIORef undefined
-                runWidget' global childContext childControlRef child
-                return $ Compose childControlRef
-        children <- Record.traverse1 setupChild $ holes internal
-        let destroyChildren = do
-            let destroyChild childControlRef = do
-                childControl <- readIORef $ getCompose childControlRef
-                destroy childControl
-                return childControlRef
-            Record.traverse1 destroyChild children
-            return ()
+    -- Figure/drawing
+    destroyFigureChan <- spawn
+    let drawListener cache = do
+        let getFigureD anyFocusD = do
+            let options = Record.map (\key -> plex2D
+                  (ifD anyFocusD (keep Nothing) (keep key))
+                  (keep False)) keyAssignments
+            let drawChild :: forall b. InstanceControl r b
+                    -> Actor r (Compose Delta Figure b)
+                drawChild child = do
+                    responseChan <- spawn
+                    yield (drawChan child) (anyFocusD, yield responseChan)
+                    Compose <$> await (source responseChan)
+            childFigures <- Record.traverse1 drawChild childControls
+            let context = Page.Context {
+                getOption = (`Record.get` options),
+                getHole = \hole -> getCompose $
+                    Record.get1 hole childFigures }
+            return $ Page.figure (page internal) context
+        msg <- await $
+            (Left False <$ source destroyFigureChan) <>
+            (Left True <$ source invalidateChan) <>
+            (Right <$> draw inst)
+        case msg of
+            Left False -> return ()
+            Left True -> do
+                redraw inst
+                drawListener (Left False)
+            Right (anyFocusD, respond) -> case (anyFocusD, cache) of
+                (Keep _, Right cache) -> do
+                    respond $ keep cache
+                    drawListener (Right cache)
+                (anyFocusD, Right _) -> do
+                    figureD <- getFigureD anyFocusD
+                    respond figureD
+                    drawListener (Right $ final figureD)
+                (anyFocusD, Left firstTime) -> do
+                    figureD <- getFigureD anyFocusD
+                    respond $ if firstTime
+                        then set (final figureD)
+                        else figureD
+                    drawListener (Right $ final figureD)
+    fork $ drawListener (Left True)
 
-        -- Programmability
-        let interpret :: ProgramView
-                (WidgetInstr i o i' o' h k)
-                (Widget i o a) -> IO ()
-            interpret (Return nWidget) = do
-                destroyThis
-                runWidget' global context controlRef nWidget
-            interpret (Await :>>= cont) = writeIORef contRef cont
-            interpret (Replace hole nChild :>>= cont) = do
-                let childControlRef = getCompose $ Record.get1 hole children
-                childControl <- readIORef childControlRef
-                destroy childControl
-                runWidget' global childContext childControlRef nChild
-                interpret $ view $ cont ()
-            interpret (SendParent msg :>>= cont) = do
-                send context msg
-                interpret $ view $ cont ()
-            interpret (SendChild msg :>>= cont) = do
-                let sendChild msg childControlRef = do
-                    childControl <- readIORef $ getCompose childControlRef
-                    receive childControl msg
-                    return $ Const undefined
-                Record.traverse1 (sendChild msg) children
-                interpret $ view $ cont ()
-        let process :: Event i o' k -> IO ()
-            process event = do
-                cont <- readIORef contRef
-                interpret $ view $ cont event
-        contRef <- newIORef undefined
+    -- Destruction
+    let destroyComponents = do
+        freeKeys global $ catMaybes $ Record.elems keyAssignments
+        yield destroyFigureChan ()
+        let destroyChild child = do
+            yield (destroyInstChan child) ()
+            return child
+        Record.traverse1 destroyChild childControls
+        return ()
+    destroyChan <- spawn
+    destroyNotifyChan <- spawn
+    isDestroyed <- stepper False (True <$ source destroyNotifyChan)
+    fork $ do
+        external <- await $
+            (True <$ destroyInst inst) <>
+            (False <$ source destroyChan)
+        when external $ do
+            yield destroyNotifyChan ()
+            yield destroyChan ()
+            destroyComponents
 
-        -- Setup control interface
-        let destroyThis = do
-            freeKeysThis
-            destroyChildren
-        writeIORef controlRef InstanceControl {
-            receive = process . ReceiveParent,
-            navigate = undefined, -- TODO: navigation
-            figure = figureThis,
-            destroy = destroyThis }
-        redraw context
+    -- Programmability
+    let context = Context {
+        select = source selectChan,
+        destroy = source destroyChan }
+    nWidget <- actor internal context
 
--- | Runs a widget taking up the full terminal, given a procedure to listen for
--- input messages and a procedure to respond to output messages.
-runWidget :: IO i -> (o -> IO ())
-    -> Widget i o (Block (Ind Vary Vary)) -> IO ()
-runWidget _ output widget = do
-    keysRef <- newIORef Map.empty
-    let assignKeys struct = forM struct (\(act, pKeys) -> do
-        keys <- get
-        let tryAdd [] = return Nothing
-            tryAdd (pKey : pKeys) = case Map.lookup pKey keys of
-                Nothing -> do
-                    put $ Map.insert pKey act keys
-                    return $ Just pKey
-                Just _ -> tryAdd pKeys
-        tryAdd pKeys)
-    let global = GlobalContext {
-        allocKeys = \struct -> do
-            keys <- readIORef keysRef
-            let (nStruct, nKeys) = runState (assignKeys struct) keys
-            writeIORef keysRef nKeys
-            return nStruct,
-        freeKeys = \keys -> modifyIORef keysRef
-            (`Map.difference` (Map.fromList $ map (\x -> (x, ())) keys)),
-        focus = undefined } -- TODO: focus
-    let inst = InstanceContext {
-        send = output,
-        redraw = return () }
-    controlRef <- newIORef undefined
-    runWidget' global inst controlRef widget
+    -- Replace with resulting widget
+    destroyed <- isDestroyed
+    unless destroyed $ do
+        yield destroyChan ()
+        destroyComponents
+        redraw inst
+        runWidget global inst nWidget
+
+-- | Describes a request for keys, used to implement 'allocKeys'.
+data KeyRequest r = forall t. (Traversable t) =>
+    KeyRequest (t (Actor r (), [Key])) (t (Maybe Key) -> Actor r ())
+
+-- | Prepares a terminal to run a widget. The given source can be used to
+-- release the terminal.
+startTerminal :: Source IOContext ()
+    -> ActorT IOContext IO (
+        GlobalContext IOContext,
+        InstanceContext IOContext (Block (Ind Vary Vary)))
+startTerminal close = do
+
+    -- Closing/destruction
+    close'Chan <- spawn
+    destroyInstChan <- spawn
+    isClosed <- stepper False (True <$ source close'Chan)
+    fork $ do
+        await close
+        send close'Chan ()
+        send destroyInstChan ()
+        liftIO $ setSGR [Reset]
+
+    -- Timing
+    processingChan <- spawn -- use to delay drawing
+
+    -- Key assignment
+    allocChan <- spawn
+    freeChan <- spawn
+    keyChan <- spawn
+    let keyAssignListener keys = do
+        msg <- await $
+            (Left . Left <$> source allocChan) <>
+            (Left . Right <$> source freeChan) <>
+            (Right <$> source keyChan)
+        case msg of
+            Left (Left (KeyRequest struct respond)) -> do
+                let assignKeys = forM struct (\(act, pKeys) -> do
+                    keys <- get
+                    let tryAdd [] = return Nothing
+                        tryAdd (pKey : pKeys) = case Map.lookup pKey keys of
+                            Nothing -> do
+                                put $ Map.insert pKey act keys
+                                return $ Just pKey
+                            Just _ -> tryAdd pKeys
+                    tryAdd pKeys)
+                let (nStruct, nKeys) = runState assignKeys keys
+                liftActor $ respond nStruct
+                keyAssignListener nKeys
+            Left (Right freeKeys) -> do
+                let tKeys = Map.fromList $ map (\x -> (x, ())) freeKeys
+                let nKeys = Map.difference keys tKeys
+                keyAssignListener nKeys
+            Right key -> do
+                yield processingChan True
+                liftActor $ fromMaybe (return ()) $ Map.lookup key keys
+                yield processingChan False
+                keyAssignListener keys
+    let allocKeys :: forall t. (Traversable t)
+            => t (Actor IOContext (), [Key]) -> Actor IOContext (t (Maybe Key))
+        allocKeys struct = do
+            responseChan <- spawn
+            yield allocChan (KeyRequest struct (yield responseChan))
+            await $ source responseChan
+    let freeKeys = yield freeChan
+    fork $ keyAssignListener Map.empty
+
+    -- Key input
+    let keyListener = do
+        closed <- isClosed
+        unless closed $ do
+            key <- blocking $ liftIO getHiddenChar
+            send keyChan key
+            keyListener
+    fork keyListener
+
+    -- Drawing
+    redrawChan <- spawn
+    drawChan <- spawn
     let getSize = do
         Just size' <- Size.size
         return (Size.width size', Size.height size')
-    initialSize <- getSize
-    sizeRef <- newIORef initialSize
-    let getDraw sizeD = do
-        control <- readIORef controlRef
-        fig <- figure control (pure False)
-        return $ fstD (placeD fig <*> plex2D sizeD (pure (0, 0)))
-    let initialHeight = snd initialSize
-    replicateM_ initialHeight $ putStrLn ""
-    cursorUp initialHeight
-    initialDraw <- getDraw (set initialSize)
-    let initialSt = (fst initialSize, (0, 0), defaultAppearance)
-    stRef <- runDraw (final initialDraw) initialSt >>= newIORef
-    let redraw = do
-        lastSize <- readIORef sizeRef
-        curSize <- getSize
-        writeIORef sizeRef curSize
-        let sizeD = checkD $ stride lastSize curSize
-        drawD <- getDraw sizeD
-        st <- readIORef stRef
-        nSt <- runDraw (paintD drawD) st
-        writeIORef stRef nSt
-    forever $ do
-        key <- getHiddenChar
-        -- TODO: input messages
-        -- TODO: navigation and further key processing
-        keys <- readIORef keysRef
-        fromMaybe (return ()) $ Map.lookup key keys
-        redraw
+    let getDraw (sizeD :: Delta (Int, Int)) = do
+        responseChan <- spawn
+        yield drawChan (pure False, \figD ->
+            yield responseChan figD :: Actor IOContext ())
+        figD <- await $ source responseChan
+        return $ fstD (placeD figD <*> plex2D sizeD (pure (0, 0)))
+    let initialDraw = do
+        size <- liftIO getSize
+        draw <- getDraw $ set size
+        liftIO $ do
+            let height = snd size
+            replicateM_ height $ putStrLn ""
+            cursorUp height
+            let st = (fst size, (0, 0), defaultAppearance)
+            nSt <- runDraw (final draw) st
+            return (size, nSt)
+    let reDraw (size, st) = do
+        nSize <- liftIO getSize
+        draw <- getDraw $ checkD $ stride size nSize
+        nSt <- liftIO $ runDraw (paintD draw) st
+        return (nSize, nSt)
+    let initialDrawListener = do
+            state <- initialDraw
+            drawListener 0 state
+        drawListener (p :: Int) state = do
+            closed <- isClosed
+            unless closed $ do
+                msg <- await $
+                    (Just <$> source processingChan) <>
+                    (Nothing <$ source redrawChan)
+                case msg of
+                    Just True -> drawListener (p + 1) state
+                    Just False | p == 1 -> do
+                        nState <- reDraw state
+                        drawListener 0 nState
+                    Just False -> drawListener (p - 1) state
+                    Nothing | p == 0 -> do
+                        nState <- reDraw state
+                        drawListener 0 nState
+                    Nothing -> drawListener p state
+    fork initialDrawListener
+
+    -- Contexts
+    let redraw = yield redrawChan ()
+    let navigate = undefined -- TODO
+    let draw = source drawChan
+    let destroyInst = source destroyInstChan
+    return (GlobalContext { .. }, InstanceContext { .. })

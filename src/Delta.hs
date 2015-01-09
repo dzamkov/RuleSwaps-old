@@ -13,6 +13,7 @@ module Delta (
     DeltaRel (..),
     Complex,
     checkD,
+    ifD,
     funD,
     fstD,
     sndD,
@@ -127,6 +128,12 @@ checkD :: (Eq a) => Delta a -> Delta a
 checkD d = case initial d of
     Just initial | initial == final d -> Keep initial
     _ -> d
+
+-- | If-then-else for deltas.
+ifD :: Delta Bool -> Delta a -> Delta a -> Delta a
+ifD (Keep True) dx _ = dx
+ifD (Keep False) _ dy = dy
+ifD dc dx dy = (\c x y -> if c then x else y) <$> dc <*> dx <*> dy
 
 -- | Converts a function to a delta into a delta of a function.
 funD :: (a -> Delta b) -> Delta (a -> b)
