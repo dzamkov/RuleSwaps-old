@@ -106,10 +106,8 @@ awaitBlocking inner int = do
             valid <- shouldHandle handled
             when valid $ putMVar var $ Left res
         awaitIO int (Just handled) $ \msg -> do
-            valid <- shouldHandle handled
-            when valid $ do
-                killThread thread
-                putMVar var $ Right msg
+            putMVar var $ Right msg
+            killThread thread
     blocking $ takeMVar var
 
 -- | Lifts a blocking IO effect.
