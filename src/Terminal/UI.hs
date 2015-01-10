@@ -67,14 +67,14 @@ button id keys name = res where
         (strongSpace' 1 +++ view +++ label +++ strongSpace' 1)
 
 -- | Identifies an option on the main menu.
-data MenuOption = Join | Host | Exit deriving (Eq, Ord, Enum, Bounded)
+data MenuOption = Join | Host | Quit deriving (Eq, Ord, Enum, Bounded)
 type instance Record MenuOption = EnumRecord MenuOption
 
 -- | The context information needed by the UI when there is no active game.
 data MainContext r = MainContext {
 
-    -- | Exits the program.
-    exit :: Actor r () }
+    -- | Quits the program.
+    quit :: Actor r () }
 
 -- | The widget for the entire user interface.
 {-# ANN module "HLint: ignore Use string literal" #-}
@@ -92,11 +92,11 @@ main (MainContext { .. }) = res where
             ===
             button Host ['h'] "Host"
             ===
-            button Exit ['e'] "Exit")
+            button Quit ['q'] "Quit")
     actor (Context { .. }) = do
         option <- await select
         case option of
             Join -> undefined -- TODO
             Host -> undefined -- TODO
-            Exit -> exit >> return res
+            Quit -> quit >> stop
     res = widgetSimple page actor

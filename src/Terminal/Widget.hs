@@ -33,7 +33,7 @@ import System.Console.ANSI (setSGR, SGR (Reset))
 import qualified System.Console.Terminal.Size as Size
 import Control.Monad.Trans
 import Control.Monad.State (runState, get, put)
-import Control.Monad (when, unless, replicateM_)
+import Control.Monad (forever, when, unless, replicateM_)
 import Control.Applicative
 
 -- | Provides context for a widget's actor.
@@ -141,7 +141,7 @@ runWidget global inst (Widget builder) = do
     -- Allocate keys
     selectChan <- spawn
     keyAssignments <- allocKeys global $
-        Record.mapWithName (\name keys -> (yield selectChan name, keys)) $
+        Record.mapWithName (\name keys -> (send selectChan name, keys)) $
         Record.prefFromList $ Page.shortcuts $ page internal
 
     -- Run children
@@ -151,7 +151,7 @@ runWidget global inst (Widget builder) = do
             drawChan <- spawn
             destroyInstChan <- spawn
             let childInst = InstanceContext {
-                redraw = yield invalidateChan (),
+                redraw = send invalidateChan (),
                 navigate = undefined, -- TODO: navigation
                 draw = source drawChan,
                 destroyInst = source destroyInstChan }
@@ -160,7 +160,8 @@ runWidget global inst (Widget builder) = do
     childControls <- Record.traverse1 setupChild $ holes internal
 
     -- Figure/drawing
-    destroyFigureChan <- spawn
+    destroyDrawChan <- spawn
+    drawDestroyedChan <- spawn
     let drawListener cache = do
         let getFigureD anyFocusD = do
             let options = Record.map (\key -> plex2D
@@ -170,7 +171,7 @@ runWidget global inst (Widget builder) = do
                     -> Actor r (Compose Delta Figure b)
                 drawChild child = do
                     responseChan <- spawn
-                    yield (drawChan child) (anyFocusD, yield responseChan)
+                    send (drawChan child) (anyFocusD, send responseChan)
                     Compose <$> await (source responseChan)
             childFigures <- Record.traverse1 drawChild childControls
             let context = Page.Context {
@@ -179,11 +180,11 @@ runWidget global inst (Widget builder) = do
                     Record.get1 hole childFigures }
             return $ Page.figure (page internal) context
         msg <- await $
-            (Left False <$ source destroyFigureChan) <>
+            (Left False <$ source destroyDrawChan) <>
             (Left True <$ source invalidateChan) <>
             (Right <$> draw inst)
         case msg of
-            Left False -> return ()
+            Left False -> send drawDestroyedChan ()
             Left True -> do
                 redraw inst
                 drawListener (Left False)
@@ -204,25 +205,26 @@ runWidget global inst (Widget builder) = do
     fork $ drawListener (Left True)
 
     -- Destruction
-    let destroyComponents = do
-        freeKeys global $ catMaybes $ Record.elems keyAssignments
-        yield destroyFigureChan ()
-        let destroyChild child = do
-            yield (destroyInstChan child) ()
-            return child
-        Record.traverse1 destroyChild childControls
-        return ()
     destroyChan <- spawn
-    destroyNotifyChan <- spawn
-    isDestroyed <- stepper False (True <$ source destroyNotifyChan)
-    fork $ do
+    replaceChan <- spawn
+    replaceOkayChan <- spawn
+    let destroyListener = do
         external <- await $
             (True <$ destroyInst inst) <>
-            (False <$ source destroyChan)
-        when external $ do
-            yield destroyNotifyChan ()
-            yield destroyChan ()
-            destroyComponents
+            (False <$ source replaceChan)
+        freeKeys global $ catMaybes $ Record.elems keyAssignments
+        send destroyDrawChan ()
+        let destroyChild child = do
+            send (destroyInstChan child) ()
+            return child
+        Record.traverse1 destroyChild childControls
+        when external $ send destroyChan ()
+        await $ source drawDestroyedChan
+        unless external $ send replaceOkayChan True
+        forever $ do
+            await $ source replaceChan
+            send replaceOkayChan False
+    fork destroyListener
 
     -- Programmability
     let context = Context {
@@ -231,12 +233,9 @@ runWidget global inst (Widget builder) = do
     nWidget <- actor internal context
 
     -- Replace with resulting widget
-    destroyed <- isDestroyed
-    unless destroyed $ do
-        yield destroyChan ()
-        destroyComponents
-        redraw inst
-        runWidget global inst nWidget
+    send replaceChan ()
+    okay <- await $ source replaceOkayChan
+    when okay $ runWidget global inst nWidget
 
 -- | Describes a request for keys, used to implement 'allocKeys'.
 data KeyRequest r = forall t. (Traversable t) =>
@@ -251,17 +250,17 @@ startTerminal :: Source IOContext ()
 startTerminal close = do
 
     -- Closing/destruction
-    close'Chan <- spawn
+    stopKeyChan <- spawn
+    stopDrawChan <- spawn
     destroyInstChan <- spawn
-    isClosed <- stepper False (True <$ source close'Chan)
     fork $ do
         await close
-        send close'Chan ()
+        send stopKeyChan ()
+        send stopDrawChan ()
         send destroyInstChan ()
-        liftIO $ setSGR [Reset]
-
-    -- Timing
-    processingChan <- spawn -- use to delay drawing
+        liftIO $ do
+            setSGR [Reset]
+            putStrLn ""
 
     -- Key assignment
     allocChan <- spawn
@@ -291,26 +290,25 @@ startTerminal close = do
                 let nKeys = Map.difference keys tKeys
                 keyAssignListener nKeys
             Right key -> do
-                yield processingChan True
                 liftActor $ fromMaybe (return ()) $ Map.lookup key keys
-                yield processingChan False
                 keyAssignListener keys
     let allocKeys :: forall t. (Traversable t)
             => t (Actor IOContext (), [Key]) -> Actor IOContext (t (Maybe Key))
         allocKeys struct = do
             responseChan <- spawn
-            yield allocChan (KeyRequest struct (yield responseChan))
+            send allocChan (KeyRequest struct (send responseChan))
             await $ source responseChan
-    let freeKeys = yield freeChan
+    let freeKeys = send freeChan
     fork $ keyAssignListener Map.empty
 
     -- Key input
     let keyListener = do
-        closed <- isClosed
-        unless closed $ do
-            key <- blocking $ liftIO getHiddenChar
-            send keyChan key
-            keyListener
+        key <- awaitBlocking getHiddenChar (source stopKeyChan)
+        case key of
+            Left key -> do
+                send keyChan key
+                keyListener
+            Right _ -> return ()
     fork keyListener
 
     -- Drawing
@@ -321,8 +319,8 @@ startTerminal close = do
         return (Size.width size', Size.height size')
     let getDraw (sizeD :: Delta (Int, Int)) = do
         responseChan <- spawn
-        yield drawChan (pure False, \figD ->
-            yield responseChan figD :: Actor IOContext ())
+        send drawChan (pure False, \figD ->
+            send responseChan figD :: Actor IOContext ())
         figD <- await $ source responseChan
         return $ fstD (placeD figD <*> plex2D sizeD (pure (0, 0)))
     let initialDraw = do
@@ -342,27 +340,18 @@ startTerminal close = do
         return (nSize, nSt)
     let initialDrawListener = do
             state <- initialDraw
-            drawListener 0 state
-        drawListener (p :: Int) state = do
-            closed <- isClosed
-            unless closed $ do
-                msg <- await $
-                    (Just <$> source processingChan) <>
-                    (Nothing <$ source redrawChan)
-                case msg of
-                    Just True -> drawListener (p + 1) state
-                    Just False | p == 1 -> do
-                        nState <- reDraw state
-                        drawListener 0 nState
-                    Just False -> drawListener (p - 1) state
-                    Nothing | p == 0 -> do
-                        nState <- reDraw state
-                        drawListener 0 nState
-                    Nothing -> drawListener p state
+            drawListener state
+        drawListener state = do
+            msg <- await $
+                (True <$ source redrawChan) <>
+                (False <$ source stopDrawChan)
+            when msg $ do
+                nState <- reDraw state
+                drawListener nState
     fork initialDrawListener
 
     -- Contexts
-    let redraw = yield redrawChan ()
+    let redraw = send redrawChan ()
     let navigate = undefined -- TODO
     let draw = source drawChan
     let destroyInst = source destroyInstChan
