@@ -7,16 +7,19 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE DataKinds #-}
 module Terminal.Figure.Block (
+    Opacity (..),
+    Mix,
     Block,
-    Dock,
     Dep,
     Ind,
     Fix,
     Vary,
     blockify,
+    fill,
     Border,
     withBorder,
     lineBorder,
+    solidBorder,
     padding,
     box,
     pad,
@@ -24,28 +27,38 @@ module Terminal.Figure.Block (
     setHeight,
     hcenter,
     vcenter,
-    center
+    center,
+    over
 ) where
 
 import Delta
-import Terminal.Draw
+import Terminal.Draw hiding (fill)
 import qualified Terminal.Draw as Draw
 import Terminal.Figure.Core
 import Terminal.Figure.Flow
 import Data.Proxy
 import Control.Applicative hiding (empty)
 
+-- | Describes the opacity of a block, that is, whether or not figures will
+-- be visible "through" it.
+data Opacity = Translucent | Opaque
+
+-- | The opacity of a block that contains non-overlapping elements of both of
+-- the given opacities.
+type family Mix (x :: Opacity) (y :: Opacity) :: Opacity where
+    Mix Translucent y = Translucent
+    Mix x Translucent = Translucent
+    Mix Opaque y = y
+    Mix x Opaque = x
+
 -- | The layout type for a block figure, one which takes up a rectangular area.
--- The @s@ specifies how sizing is performed for the block.
-data Block s
+-- @o@ specifies opacity while @s@ specifies how sizing is performed for the
+-- block.
+data Block (o :: Opacity) s
 
-type instance Layout (Block s) = Layout s
-type instance Placement (Block s) = (Placement s, Point)
-type instance Bonus (Block s) = (Width, Height)
-
--- | The layout type for a block figure which takes up a variable-size
--- rectangular area.
-type Dock = Block (Ind Vary Vary)
+type instance Layout (Block o s) = Layout s
+type instance Placement (Block o s) = (Placement s, Point)
+type instance Bonus (Block o s) = (Width, Height)
 
 -- | The sizing type for a block where the width and height are interrelated
 -- and specifying one will determine the other.
@@ -78,25 +91,31 @@ type instance Placement (Vary Horizontal) = Width
 type instance Placement (Vary Vertical) = Height
 
 -- | Tests a block figure by specifying a size.
-testPlace :: Placement s -> Figure (Block s) -> IO ()
+testPlace :: Placement s -> Figure (Block o s) -> IO ()
 testPlace size fig = do
     let (draw, (_, height)) = place fig (size, (0, 0))
     runDrawInline height draw
 
-instance CanTest (Block Dep) where
+instance CanTest (Block o Dep) where
     test = testPlace $ Left testWidth
-instance CanTest (Block (Ind Fix Fix)) where
+instance CanTest (Block o (Ind Fix Fix)) where
     test = testPlace ((), ())
-instance CanTest (Block (Ind Vary Fix)) where
+instance CanTest (Block o (Ind Vary Fix)) where
     test = testPlace (testWidth, ())
-instance CanTest (Block (Ind Fix Vary)) where
+instance CanTest (Block o (Ind Fix Vary)) where
     test = testPlace ((), testHeight)
-instance CanTest (Block (Ind Vary Vary)) where
+instance CanTest (Block o (Ind Vary Vary)) where
     test = testPlace (testWidth, testHeight)
+
+-- | Constructs a solid-colored block.
+fill :: FullColor -> Figure (Block Opaque (Ind Vary Vary))
+fill back = Figure {
+    layout = ((), ()),
+    place = \((w, h), offset) -> (Draw.fill back offset w h, (w, h)) }
 
 -- | Converts a flowed figure into a dependently-sized block with the given
 -- back color.
-blockify :: (FigureLike f) => FullColor -> f Flow -> f (Block Dep)
+blockify :: (FigureLike f) => FullColor -> f Flow -> f (Block Opaque Dep)
 blockify back flow = compose hint (\eval -> blockify' <$> eval flow) where
     hint = Nothing
     blockify' flow = res where
@@ -145,21 +164,23 @@ instance CanEnclose (Ind Fix Fix) (Ind Fix Fix) where
         f (w, h) = (w + width, h + height)
         g _ = ((), ())
 
--- | Describes a border that can be applied to a block. The size of the border
--- in each direction (left, top, right, bottom) is given, along with a function
--- which draws the border given the size and placement of full block (including
--- border).
-type Border =
-    (Width, Height, Width, Height,
-    (Width, Height) -> Point -> Draw)
+-- | Describes a border that can be applied to a block.
+data Border (o :: Opacity) = Border {
+
+    -- | The size of the border.
+    borderSize :: (Width, Height, Width, Height),
+
+    -- | Draws the border given the size and placement of the full block
+    -- (including border).
+    drawBorder :: (Width, Height) -> Point -> Draw }
 
 -- | Applies a border to a block.
-withBorder :: forall s n f. (FigureLike f, CanEnclose s n)
-    => Border -> f (Block s) -> f (Block n)
+withBorder :: forall b o s n f. (FigureLike f, CanEnclose s n)
+    => Border b -> f (Block o s) -> f (Block (Mix b o) n)
 withBorder border block = compose h (\eval -> withBorder' <$> eval block) where
     h = Nothing
     withBorder' block = res where
-        (left, top, right, bottom, drawBorder') = border
+        (left, top, right, bottom) = borderSize border
         padWidth = left + right
         padHeight = top + bottom
         (f, g) = transEnclose (undefined :: s) (padWidth, padHeight)
@@ -168,13 +189,14 @@ withBorder border block = compose h (\eval -> withBorder' <$> eval block) where
             (drawInner, innerSize) = break2D $ placeD block <*>
                 pure (g size, (x + left, y + top))
             fullSize = (\(w, h) -> (w + padWidth, h + padHeight)) <$> innerSize
-            drawBorder = (\size -> drawBorder' size (x, y)) <$> fullSize
-            res = plex2D (plusD drawInner drawBorder) fullSize
+            drawBorder' = (\size -> drawBorder border size (x, y)) <$> fullSize
+            res = plex2D (plusD drawInner drawBorder') fullSize
 
 -- | A 1-character-thick line border with the given appearance.
-lineBorder :: Appearance -> Border
-lineBorder appr = (1, 1, 1, 1, draw) where
-    draw (width, height) (x, y) = foldl1 (|%|) [
+lineBorder :: Appearance -> Border Opaque
+lineBorder appr = Border {
+    borderSize = (1, 1, 1, 1),
+    drawBorder = \(width, height) (x, y) -> foldl1 (|%|) [
         Draw.string appr (x, y) "+",
         Draw.hline appr '-' (x + 1, y) (width - 2),
         Draw.string appr (x + width - 1, y) "+",
@@ -182,34 +204,42 @@ lineBorder appr = (1, 1, 1, 1, draw) where
         Draw.string appr (x + width - 1, y + height - 1) "+",
         Draw.hline appr '-' (x + 1, y + height - 1) (width - 2),
         Draw.string appr (x, y + height - 1) "+",
-        Draw.vline appr '|' (x, y + 1) (height - 2)]
+        Draw.vline appr '|' (x, y + 1) (height - 2)] }
 
--- | A border which takes up space and does not much else.
-padding :: FullColor -> (Width, Height, Width, Height) -> Border
-padding back (l, t, r, b) = (l, t, r, b, draw) where
-    draw (width, height) (x, y) = foldl1 (|%|) [
+-- | A solid-colored border.
+solidBorder :: FullColor -> (Width, Height, Width, Height) -> Border Opaque
+solidBorder back size@(l, t, r, b) = Border {
+    borderSize = size,
+    drawBorder = \(width, height) (x, y) -> foldl1 (|%|) [
         Draw.fill back (x, y) width t,
         Draw.fill back (x, y + t) l (height - t - b),
         Draw.fill back (x + width - r, y + t) r (height - t - b),
-        Draw.fill back (x, y + height - b) width b]
+        Draw.fill back (x, y + height - b) width b] }
+
+-- | A border which takes up space and does not much else.
+padding :: (Width, Height, Width, Height) -> Border Translucent
+padding size = Border {
+    borderSize = size,
+    drawBorder = \_ _ -> Draw.none }
 
 -- | Encloses a block with a graphical box of the given appearance.
 box :: (FigureLike f, CanEnclose s n) => Appearance
-    -> f (Block s) -> f (Block n)
+    -> f (Block o s) -> f (Block o n)
 box = withBorder . lineBorder
 
 -- | Applies padding to a block.
-pad :: (FigureLike f, CanEnclose s n) => FullColor
-    -> (Width, Height, Width, Height)
-    -> f (Block s) -> f (Block n)
-pad back = withBorder . padding back
+pad :: (FigureLike f, CanEnclose s n)
+    => (Width, Height, Width, Height)
+    -> f (Block o s) -> f (Block Translucent n)
+pad = withBorder . padding
 
 -- | @s@ is a sizing type for a block for which the size of the axis specified
 -- by @p@ can be set, resulting in a block of sizing type @n@.
 class CanSetSize (p :: Axis) s n | p s -> n where
 
     -- | Sets the size of an axis of a block.
-    setSize :: (FigureLike f) => Proxy p -> Int -> f (Block s) -> f (Block n)
+    setSize :: (FigureLike f) => Proxy p -> Int
+        -> f (Block o s) -> f (Block o n)
 
 -- | @p@ is an axis that can be set to a given size within a dependently-sized
 -- block.
@@ -234,12 +264,12 @@ instance CanDepSetSize p => CanSetSize p Dep (Ind Fix Fix) where
 
 -- | Sets the width of a block.
 setWidth :: (FigureLike f, CanSetSize Horizontal s n)
-    => Width -> f (Block s) -> f (Block n)
+    => Width -> f (Block o s) -> f (Block o n)
 setWidth = setSize (undefined :: Proxy Horizontal)
 
 -- | Sets the height of a block.
 setHeight :: (FigureLike f, CanSetSize Vertical s n)
-    => Height -> f (Block s) -> f (Block n)
+    => Height -> f (Block o s) -> f (Block o n)
 setHeight = setSize (undefined :: Proxy Vertical)
 
 -- | @s@ is the sizing type for a block which can be centered about the axis
@@ -247,7 +277,8 @@ setHeight = setSize (undefined :: Proxy Vertical)
 class CanCenter (p :: Axis) s n | p s -> n where
 
     -- | Centers a block along the given axis.
-    centerAxis :: (FigureLike f) => Proxy p -> f (Block s) -> f (Block n)
+    centerAxis :: (FigureLike f) => Proxy p
+        -> f (Block o s) -> f (Block Translucent n)
 
 instance CanCenter Horizontal (Ind Fix a) (Ind Vary a) where
     centerAxis _ block = compose h (\eval -> centerAxis' <$> eval block) where
@@ -274,15 +305,30 @@ instance CanCenter Vertical (Ind a Fix) (Ind a Vary) where
 
 -- | Centers a block along the horizontal axis.
 hcenter :: (FigureLike f, CanCenter Horizontal s n)
-    => f (Block s) -> f (Block n)
+    => f (Block o s) -> f (Block Translucent n)
 hcenter = centerAxis (undefined :: Proxy Horizontal)
 
 -- | Centers a block along the vertical axis.
 vcenter :: (FigureLike f, CanCenter Vertical s n)
-    => f (Block s) -> f (Block n)
+    => f (Block o s) -> f (Block Translucent n)
 vcenter = centerAxis (undefined :: Proxy Vertical)
 
--- | Centers a block along both axes, using the given color for filler.
+-- | Centers a block along both axes.
 center :: (FigureLike f, CanCenter Horizontal s m, CanCenter Vertical m n)
-    => f (Block s) -> f (Block n)
+    => f (Block o s) -> f (Block Translucent n)
 center = vcenter . hcenter
+
+-- | Places a translucent block "over" another block. So the bottom block can
+-- be seen through it.
+over :: (FigureLike f)
+    => f (Block Translucent (Ind Vary Vary))
+    -> f (Block o (Ind Vary Vary))
+    -> f (Block o (Ind Vary Vary))
+over top bottom = compose h (\eval -> over' <$> eval top <*> eval bottom) where
+    h = Nothing
+    over' top bottom = res where
+        res = figureD (pure ((), ())) $ funD placed
+        placed p = res where
+            (drawTop, _) = break2D $ placeD top <*> pure p
+            (drawBottom, size) = break2D $ placeD bottom <*> pure p
+            res = plex2D (overD drawTop drawBottom) size

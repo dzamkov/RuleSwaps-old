@@ -1,6 +1,7 @@
 {-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 module Terminal.UI (
     Style (..),
     casino,
@@ -34,7 +35,7 @@ data Style = Style {
     screenBack :: FullColor,
 
     -- | The border applied to floating objects.
-    floatBorder :: Border,
+    floatBorder :: Border Opaque,
 
     -- | The back color for floating objects.
     floatBack :: FullColor }
@@ -47,7 +48,7 @@ casino = Style {
     textColor = (Dull, Black),
     highlightColor = (Vivid, Yellow),
     screenBack = (Dull, Green),
-    floatBorder = padding (Dull, White) (1, 1, 1, 1),
+    floatBorder = solidBorder (Dull, White) (1, 1, 1, 1),
     floatBack = (Vivid, White) }
 
 -- | Creates a header.
@@ -78,12 +79,13 @@ data MainContext r = MainContext {
 
 -- | The widget for the entire user interface.
 {-# ANN module "HLint: ignore Use string literal" #-}
-main :: (?style :: Style) => MainContext r -> Widget r (Block (Ind Vary Vary))
+main :: (?style :: Style) => MainContext r
+    -> Widget r (Block Opaque (Ind Vary Vary))
 main (MainContext { .. }) = res where
-    page = center $
-        pad (screenBack ?style) (5, 5, 5, 5) $
+    page = flip over (figureToPage $ fill $ screenBack ?style) $
+        center $
         withBorder (floatBorder ?style) $
-        pad (floatBack ?style) (2, 2, 2, 2) $
+        withBorder (solidBorder (floatBack ?style) (2, 2, 2, 2)) $
         setWidth 12 $
         blockify (floatBack ?style)
             (header "RuleSwaps"

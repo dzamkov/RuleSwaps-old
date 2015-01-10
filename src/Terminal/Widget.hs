@@ -4,6 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DataKinds #-}
 module Terminal.Widget (
     Context (..),
     Widget (..),
@@ -246,7 +247,7 @@ data KeyRequest r = forall t. (Traversable t) =>
 startTerminal :: Source IOContext ()
     -> ActorT IOContext IO (
         GlobalContext IOContext,
-        InstanceContext IOContext (Block (Ind Vary Vary)))
+        InstanceContext IOContext (Block Opaque (Ind Vary Vary)))
 startTerminal close = do
 
     -- Closing/destruction

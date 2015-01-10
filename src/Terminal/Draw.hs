@@ -1,5 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ViewPatterns #-}
 module Terminal.Draw (
     X, Y,
     Point,
@@ -24,6 +25,7 @@ module Terminal.Draw (
     none,
     (|%), (|%|),
     paintD,
+    overD,
     plusD,
     string,
     space,
@@ -40,7 +42,6 @@ import System.Console.ANSI
 import System.IO (hFlush, stdout)
 import Data.Maybe (catMaybes, mapMaybe)
 import Control.Monad
-import Control.Applicative
 
 -- | Describes the X offset of a point from the left edge of the terminal.
 type X = Int
@@ -133,6 +134,13 @@ type instance Complex Draw = DDraw
 instance DeltaRel DDraw Draw where
     final (DDraw _ f) = f
 
+-- | Converts a delta of 'Draw' into a 'DDraw'.
+toDDraw :: Delta Draw -> DDraw
+toDDraw (Keep x) = DDraw none x
+toDDraw (Set x) = DDraw x x
+toDDraw (Stride _ x) = DDraw x x
+toDDraw (Complex d) = d
+
 -- | Performs a drawing procedure on the current terminal.
 runDraw :: Draw -> State -> IO State
 runDraw (Draw ops) st = do
@@ -144,7 +152,7 @@ runDraw (Draw ops) st = do
 none :: Draw
 none = Draw []
 
--- | Combines two drawing operations. When overwrite is possible, drawings in
+-- | Combines two drawing operations. When overlap is possible, drawings in
 -- the second operation take precedence.
 (|%) :: Draw -> Draw -> Draw
 (|%) (Draw a) (Draw b) = Draw (a ++ b)
@@ -160,14 +168,21 @@ paintD (Keep _) = none
 paintD (Complex (DDraw a _)) = a
 paintD dx = final dx
 
+-- | Combines two drawing operations within the context of a 'Delta'. When
+-- overlap is possible, drawings in the first operation take precedence.
+overD :: Delta Draw -> Delta Draw -> Delta Draw
+overD (Keep x) (Keep y) = Keep (y |% x)
+overD (toDDraw -> DDraw xa xf) (Keep y) =
+    Complex $ DDraw xa (y |% xf)
+overD (toDDraw -> DDraw xa xf) dy =
+    Complex $ DDraw (final dy |% xa) (final dy |% xf)
+
 -- | Combines two drawing operations within the context of a 'Delta', assuming
 -- that overlap is not possible
 plusD :: Delta Draw -> Delta Draw -> Delta Draw
-plusD (Keep x) dy = Complex $ DDraw (final dy) (x |%| final dy)
-plusD dx (Keep y) = Complex $ DDraw (final dx) (y |%| final dx)
-plusD (Complex (DDraw xa xf)) (Complex (DDraw ya yf)) =
+plusD (Keep x) (Keep y) = Keep (x |%| y)
+plusD (toDDraw -> DDraw xa xf) (toDDraw -> DDraw ya yf) =
     Complex $ DDraw (xa |%| ya) (xf |%| yf)
-plusD x y = (|%|) <$> x <*> y
 
 -- | Draws a string with the given appearance to the given point.
 string :: Appearance -> Point -> String -> Draw
