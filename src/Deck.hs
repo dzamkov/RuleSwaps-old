@@ -2,38 +2,33 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 module Deck (
-    Card (..),
     card,
-    Deck,
-    standardDeck
+    standard
 ) where
 
+import Prelude hiding (take)
 import Base
 import Prim
+import Game hiding (Prim)
+import qualified Game
 import Data.Typeable
 import Data.Maybe (fromMaybe)
 
--- | Describes a possible card.
-data Card = forall r. (IsType r) => Card (Term Prim Abs r)
-deriving instance Show Card
-
 -- | Shorthand for describing a card.
-card :: Type -> [Maybe BasePrim] -> Card
-card t list = raiseType t $ \(_ :: Proxy r) ->
-    Card ((fromMaybe (error "bad card") $ listToTerm list) :: Term Prim Abs r)
-
--- | Describes a deck by listing each card and its multiplicity.
-type Deck = [(Integer, Card)]
+card :: (Game.Prim g ~ Prim) => Type -> [Maybe BasePrim] -> CardInfo g
+card t list = raiseType t $ \(_ :: Proxy r) -> CardInfo
+    ((fromMaybe (error "bad card") $ listToTerm list) :: Term Prim Abs r)
 
 -- Shorthand for this next part
 slot = Nothing
 p = Just
 
 -- | The standard deck.
-standardDeck :: Deck
-standardDeck = [
+standard :: (Game.Prim g ~ Prim) => DeckInfo g
+standard = [
 
     -- Drawing cards
     (1, card Action [p PlyDrawN, slot, p (Const 6)]),

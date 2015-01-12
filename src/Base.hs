@@ -1,5 +1,6 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
@@ -7,21 +8,26 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GADTs #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Base (
     Type (..),
     IsType (..),
     raiseType,
-    TypeList (..),
     IsTypeList (..),
+    FList (..),
+    BaseValue,
+    Value (..),
     Manner (..),
-    Mix,
     Term (..),
-    TermList (..),
     toConTerm
 ) where
 
 import Data.Typeable
 import Control.Applicative
+
+-- Orphan instances allow type-level lists to be typeable.
+deriving instance Typeable '[]
+deriving instance Typeable '(:)
 
 -- | Identifies the type of a value within the game.
 data Type
@@ -56,60 +62,54 @@ raiseType Condition inner = inner (Proxy :: Proxy Condition)
 raiseType Player inner = inner (Proxy :: Proxy Player)
 raiseType Number inner = inner (Proxy :: Proxy Number)
 
--- | A list of 'Type's.
-data TypeList
-    = Nil
-    | (:>:) Type TypeList
-infixr :>:
-deriving instance Typeable Nil
-deriving instance Typeable (:>:)
+-- | @a@ is a valid list of 'Type's.
+class Typeable a => IsTypeList (a :: [Type]) where
 
--- | @a@ is of kind 'TypeList'.
-class Typeable a => IsTypeList (a :: TypeList) where
+    -- | Constructs an 'FList' using this type-list as a template.
+    mkTermList :: (Applicative g) => Proxy a
+        -> (forall b. (IsType b) => g (f b))
+        -> g (FList f a)
 
-    -- | Constructs a 'TermList' using a 'TypeList' as a template.
-    mkTermList :: (Applicative f) => Proxy a
-        -> (forall b. (IsType b) => f (Term p m b))
-        -> f (TermList p m a)
-
-instance IsTypeList Nil where
-    mkTermList _ _ = pure TNil
-instance (IsType a, IsTypeList b) => IsTypeList (a :>: b) where
-    mkTermList _ inner = TCons <$> inner <*>
+instance IsTypeList '[] where
+    mkTermList _ _ = pure FNil
+instance (IsType a, IsTypeList b) => IsTypeList (a ': b) where
+    mkTermList _ inner = FCons <$> inner <*>
         mkTermList (Proxy :: Proxy b) inner
+
+-- | A heterogenously-typed list where the type of each item is found by
+-- applying a constant type function to the element type.
+data FList (f :: k -> *) (t :: [k]) where
+    FNil :: FList f '[]
+    FCons :: f a -> FList f b -> FList f (a ': b)
+
+-- | A value of game type @t@, where @p@ is an identifier for a player.
+type family BaseValue (p :: *) (t :: Type) where
+    BaseValue p Action = ()
+    BaseValue p Condition = Bool
+    BaseValue p Player = p
+    BaseValue p Number = Integer
+
+-- | A value of game type @t@, where @p@ is an identifier for a player.
+newtype Value (p :: *) (t :: Type) = Value (BaseValue p t)
 
 -- | Specifies whether a term has slots ('Abs') or not ('Con').
 data Manner = Abs | Con
 
--- | The 'Manner' for a term consisting of terms of the given manners.
-type family Mix (x :: Manner) (y :: Manner) :: Manner where
-    Mix Abs y = Abs
-    Mix x Abs = Abs
-    Mix Con y = y
-    Mix x Con = x
-    Mix m m = m
-
 -- | A composition of primitives that yields a value of type @r@. When abstract
 -- (@m ~ Abs@), the term may contain "slots" which are placeholders for values.
-data Term (p :: TypeList -> Type -> *) (m :: Manner) (r :: Type) where
+data Term (p :: [Type] -> Type -> *) (m :: Manner) (r :: Type) where
 
     -- | A placeholder for a value.
     Slot :: Term p Abs r
 
     -- | An application of a primitive to a list of terms representing
     -- arguments.
-    App :: p a r -> TermList p m a -> Term p m r
-
--- | A list of terms corresponding to a 'TypeList'. This is used to implement
--- 'Term'.
-data TermList (p :: TypeList -> Type -> *) (m :: Manner) (t :: TypeList) where
-    TNil :: TermList p m Nil
-    TCons :: Term p x a -> TermList p y b -> TermList p (Mix x y) (a :>: b)
+    App :: p a r -> FList (Term p m) a -> Term p m r
 
 -- | Tries converting a term into a concrete term.
 toConTerm :: Term p m r -> Maybe (Term p Con r)
 toConTerm Slot = Nothing
 toConTerm (App prim list) = App prim <$> toConList list where
-    toConList :: TermList p m r -> Maybe (TermList p Con r)
-    toConList TNil = Just TNil
-    toConList (TCons a b) = TCons <$> toConTerm a <*> toConList b
+    toConList :: FList (Term p m) r -> Maybe (FList (Term p Con) r)
+    toConList FNil = Just FNil
+    toConList (FCons a b) = FCons <$> toConTerm a <*> toConList b

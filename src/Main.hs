@@ -3,6 +3,7 @@
 module Main where
 
 import Actor
+import Deck
 import System.Console.ANSI
 import Terminal.Widget
 import qualified Terminal.UI as UI

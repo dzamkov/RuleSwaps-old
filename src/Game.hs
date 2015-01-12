@@ -1,340 +1,219 @@
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RankNTypes #-}
-module Game (
-    Player,
-    Type (..),
-    IsGameType (..),
-    Value,
-    mkValue,
-    actValue,
-    getValue,
-    Primitive (..),
-    Term (..),
-    Card,
-    Deck,
-    deckSize,
-    deckTake,
-    deckDraw,
-    termType,
-    PlayerState (..),
-    GameState (..),
-    getPlayer,
-    PrivateState (..),
-    getCard,
-    PlayerChoice (..),
-    GameInteract (..),
-    GameEffect (..),
-    GameAction (..),
-    Game,
-    runGame,
-    interaction,
-    effect,
-    state,
-    draw,
-    drawN,
-    gainCoins,
-    loseCoins,
-    rand,
-    pause,
-    message,
-    context
-) where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+module Game where
 
-import Rand (Rand, roll)
-import Data.Typeable (Typeable, cast)
-import Control.Monad
+import Prelude hiding (interact)
+import Rand
+import Base hiding (Value)
+import qualified Base
+import Data.Monoid
+import Control.Monad.Operational
 import Control.Applicative
-import Data.Maybe (fromMaybe)
-import Data.Map (Map)
-import qualified Data.Map as Map
-import qualified Data.List as List
 
--- | Identifies a game object.
-type Object = Int
+-- | Describes a part of a message.
+data MessagePart g = MessageText String | MessagePlayer (Player g)
 
--- | Identifies a player in a game.
-newtype Player = Player Object deriving (Eq, Ord, Show, Typeable)
+-- | A message that can be displayed to a player in various circumstances.
+newtype Message g = Message [MessagePart g]
+    deriving (Monoid)
 
--- | Identifies a type/category of value within the game.
-data Type
-    = TAction
-    | TCondition
-    | TPlayer
-    | TNumber deriving (Eq, Ord, Show)
+-- | Converts a string into a message.
+msg :: String -> Message g
+msg text = Message [MessageText text]
 
--- | Type @a@ is a game type.
-class Typeable a => IsGameType a where
+-- | Creates a message consisting of a player.
+msgPlayer :: Player g -> Message g
+msgPlayer player = Message [MessagePlayer player]
 
-    -- | Gets the game type of the type represented by the given value.
-    gameTypeOf :: a -> Type
+-- | Creates a message specifying the quantity of something. The singular
+-- and plural forms of that something should be given.
+msgQty :: String -> String -> Integer -> Message g
+msgQty _ plural 0 = msg $ "no " ++ plural
+msgQty singular _ 1 = msg $ "a " ++ singular
+msgQty _ plural n = msg $ show n ++ " " ++ plural
 
--- Define game types.
-instance IsGameType () where
-    gameTypeOf _ = TAction
-instance IsGameType Bool where
-    gameTypeOf _ = TCondition
-instance IsGameType Player where
-    gameTypeOf _ = TPlayer
-instance IsGameType Integer where
-    gameTypeOf _ = TNumber
+-- | Creates a message specifying a quantity of coins.
+msgCoins :: Integer -> Message g
+msgCoins = msgQty "coin" "coins"
 
--- | Stores a value of some game type.
-data Value where
-    Value :: (IsGameType a) => a -> Value
+-- | Creates a message specifying a quantity of cards.
+msgCards :: Integer -> Message g
+msgCards = msgQty "card" "cards"
 
--- | Puts a value of a game type into a 'Value' container.
-mkValue :: (IsGameType a) => a -> Value
-mkValue = Value
+-- | Concatenates messages with a space.
+infixr 6 <~>
+(<~>) :: Message g -> Message g -> Message g
+(<~>) x y = x <> msg " " <> y
 
--- | The return value of all actions.
-actValue :: Value
-actValue = mkValue ()
+-- | Identifies a player within the game context @g@.
+type family Player g :: *
 
--- | Gets a typed value from a 'Value' container. Fails horribly if the type
--- of the contained value does not match the expected type.
-getValue :: (IsGameType a) => Value -> a
-getValue (Value x) = fromMaybe (error "Invalid value conversion") (cast x)
+-- | Identifies a card within the game context @g@.
+type family Card g :: *
 
--- | Describes a composition of primitive operations of type @p@ that may
--- result in a value. Values of type @h@ are used to sub-expressions in the
--- term.
-data Term p h where
+-- | Identifies a deck within the game context @g@.
+type family Deck g :: *
 
-    -- | An unfilled slot in the term.
-    Slot :: Type -> Term p h
+-- | Identifies a consitutional rule within the game context @g@.
+type family Rule g :: *
 
-    -- | Applies a primitive operation to a list of argument terms that fill
-    -- its slots.
-    App :: p -> [(h, Term p h)] -> Term p h
-    deriving (Eq, Ord, Show)
+-- | Identifies a primitive operation within the game context @g@.
+type family Prim g :: [Type] -> Type -> *
 
--- | Describes a possible card.
-type Card p = Term p ()
+-- | Identifies a value within the game context @g@.
+type Value g = Base.Value (Player g)
 
--- | Describes a possible deck.
-type Deck p = [(Card p, Integer)]
+-- | Describes a card within the game context @g@.
+data CardInfo g = forall r. (IsType r) => CardInfo (Term (Prim g) Abs r)
 
--- | Gets the total number of cards in a deck.
-deckSize :: Deck p -> Integer
-deckSize = List.sum . List.map snd
+-- | Describes a deck within the game context @g@ by giving information for
+-- the unique cards in the deck, along with their multiplicites.
+type DeckInfo g = [(Integer, CardInfo g)]
 
--- | Takes the nth card from a deck.
-deckTake :: Deck p -> Integer -> (Deck p, Card p)
-deckTake deck i = (nDeck, card) where
-    (nDeck, Right card) = List.foldl (\accum item -> case (accum, item) of
-        ((nDeck, Right card), item) -> (item : nDeck, Right card)
-        ((nDeck, Left i), (card, mult)) | i < mult ->
-            ((card, mult - 1) : nDeck, Right card)
-        ((nDeck, Left i), item@(_, mult)) ->
-            (item : nDeck, Left (i - mult))) ([], Left i) deck
+-- | A primitive instruction for a game, resulting in a value of type @a@.
+data GameInstr g a where
 
--- | Randomly draws a number of cards from a deck. A replacement deck must be
--- given in the event that the deck runs out of cards.
-deckDraw :: Deck p -> Integer -> Deck p -> Rand (Deck p, [Card p])
-deckDraw repl n cur = go size n cur [] where
-    size = deckSize cur
-    repln = deckSize repl
-    go 0 n _ accum = go repln n repl accum
-    go _ 0 cur accum = return (cur, List.reverse accum)
-    go size n cur accum = do
-        i <- roll size
-        let (nCur, card) = deckTake cur i
-        go (size - 1) (n - 1) nCur (card : accum)
+    -- | Performs a query for public information.
+    Query :: GameQuery g a -> GameInstr g a
 
--- | Contains all publicly-available information about a player in a game.
-data PlayerState p = PlayerState {
+    -- | Performs an effect without interaction.
+    Effect :: GameEffect g a -> GameInstr g a
 
-    -- | The name of the player.
-    name :: String,
+    -- | Performs an interactive operation.
+    Interact :: GameInteract g a -> GameInstr g a
 
-    -- | The amount of coins the player has.
-    coins :: Integer,
+-- | An instruction for a game that obtains public information.
+data GameQuery g a where
 
-    -- | The set of cards the player is holding.
-    cards :: [Object],
+    -- | Gets the set of players in the game, ordered by turn order. The first
+    -- player is the current player, the next is the one afterwards, and so
+    -- on.
+    GetPlayers :: GameQuery g [Player g]
 
-    -- | The deck this player will use once their current deck is out.
-    replDeck :: Deck p }
+    -- | Gets the deck for the given player.
+    GetDeck :: Player g -> GameQuery g (Deck g)
 
--- | Contains all publicly-available information about a game at a particular
--- moment between actions.
-data GameState p = GameState {
+    -- | Gets the set of cards the given player has.
+    GetHand :: Player g -> GameQuery g (Card g)
 
-    -- | The set of players in the game in turn order. The current player
-    -- is first, the next player is next, and so on.
-    players :: [(Player, PlayerState p)],
+    -- | Gets the number of coins the given player has.
+    GetWealth :: Player g -> GameQuery g Integer
 
-    -- | The current game constitution.
-    constitution :: [(Object, Term p Object)],
+-- | An instruction for a game which modifies public information.
+data GameEffect g a where
 
-    -- | The next term in the consitution to be executed.
-    place :: Object,
+    -- | Adds the given number of coins to the given player's wealth. Wealth
+    -- should not go below zero (not checked).
+    Bank :: Player g -> Integer -> GameEffect g ()
 
-    -- | The identifier to be assigned to the next created object.
-    nextObj :: Object }
+    -- | Removes a card from the hand of the player holding it. The card should
+    -- be held by someone (not checked).
+    Discard :: Card g -> GameEffect g ()
 
--- | Gets the state of a player in a 'GameState', assuming the player is in
--- the game.
-getPlayer :: Player -> GameState p -> PlayerState p
-getPlayer target state = snd $ fromMaybe (error "Player does not exist") $
-    List.find ((== target) . fst) $ players state
+    -- | Adds a card to a player's hand. The card should not be held by
+    -- anyone (not checked).
+    Give :: Card g -> GameEffect g ()
 
--- | Contains game information that a player keeps to themselves.
-data PrivateState p = PrivateState {
+    -- | Creates a card with the given specification.
+    MaterializeCard :: CardInfo g -> GameEffect g (Card g)
 
-    -- | Contains the current decks for each player.
-    curDecks :: Map Player (Deck p),
+    -- | Creates a deck with the given specification.
+    MaterializeDeck :: DeckInfo g -> GameEffect g (Deck g)
 
-    -- | Contains the identities of all known cards.
-    cardInfo :: Map Object (Card p) }
+    -- | Displays a message to all players.
+    Print :: Message g -> GameEffect g ()
 
--- | Gets the identity of the given card, or return 'Nothing' if the card is
--- unknown.
-getCard :: Object -> PrivateState p -> Maybe (Card p)
-getCard id = Map.lookup id . cardInfo
+-- | An instruction for a game that requires interaction or non-public
+-- information to perform.
+data GameInteract g a where
+
+    -- | Players simultaneously make a decision.
+    Choice :: (Monoid a) => (Player g -> PlayerChoice g a) -> GameInteract g a
+
+    -- | Draws a card from the given deck.
+    Draw :: Deck g -> GameInteract g (Card g)
+
+    -- | The holder of the given card must reveal it to the given player.
+    Reveal :: Card g -> Player g -> GameInteract g ()
+
+    -- | The holder of the given card must reveal it to all other players.
+    RevealAll :: Card g -> GameInteract g (CardInfo g)
+
+    -- | Publicly choose a random value.
+    Rand :: Rand a -> GameInteract g a
+
+    -- | Performs a synchronized pause mediated by the given player.
+    Pause :: Player g -> GameInteract g ()
+
+-- | Identifies a procedure within the context of a game.
+newtype Game g a = Game (Program (GameInstr g) a)
+    deriving (Functor, Applicative, Monad)
+
+-- | Constructs a game procedure from a single query.
+query :: GameQuery g a -> Game g a
+query = Game . singleton . Query
+
+-- | Gets the number of coins the given player currently has.
+getWealth :: Player g -> Game g Integer
+getWealth = query . GetWealth
+
+-- | Constructs a game procedure from a single effect.
+effect :: GameEffect g a -> Game g a
+effect = Game . singleton . Effect
+
+-- | Adds the given number of coins to the given player's wealth. Wealth should
+-- not fall below zero (not checked).
+bank :: Player g -> Integer -> Game g ()
+bank player amount = effect $ Bank player amount
+
+-- | Displays a message to all players.
+print :: Message g -> Game g ()
+print = effect . Print
+
+-- | Constructs a game procedure from a single interactive action.
+interact :: GameInteract g a -> Game g a
+interact = Game . singleton . Interact
+
+-- | Performs a synchronized pause mediated by the given player.
+pause :: Player g -> Game g ()
+pause = interact . Pause
+
+-- | Identifies an individual decision that an individual player can make,
+-- resulting in a value of type @a@.
+data PlayerChoiceInstr g a where
+
+    -- | The player can make a choice to continue to the next section of the
+    -- decision tree, or not. This is like 'ChooseYesNo', but is implicitly
+    -- yes. The given message is shown in regards to "cancelling" to make
+    -- this no.
+    ChooseContinue :: Message g -> PlayerChoiceInstr g Bool
+
+    -- | The player makes a yes or no decision.
+    ChooseYesNo :: Message g -> PlayerChoiceInstr g Bool
+
+    -- | The player chooses another player in the given set.
+    ChoosePlayer :: Message g
+        -> (Player g -> Maybe a)
+        -> PlayerChoiceInstr g a
+
+    -- | The player chooses a number in the given range (inclusive).
+    ChooseNumber :: Message g -> Integer -> Integer
+        -> PlayerChoiceInstr g Integer
+
+    -- | The player chooses a card within the given set.
+    ChooseCard :: Message g
+        -> (forall r. (IsType r) => Card g -> Term (Prim g) Abs r -> Maybe a)
+        -> PlayerChoiceInstr g a
+
+    -- | The player chooses a rule in the given set.
+    ChooseRule :: Message g
+        -> (Rule g -> Maybe a)
+        -> PlayerChoiceInstr g a
 
 -- | Identifies a decision that an individual player can make, resulting in
 -- a value of type @a@.
-data PlayerChoice p a where
-
-    -- | The player makes a yes or no decision.
-    YesNo :: PlayerChoice p Bool
-
-    -- | The player choses a number up to their current coin count. The
-    -- parameter is a hint for the player which tells whether the coins will
-    -- be unconditionally lost (as in a payment).
-    Coin :: Bool -> PlayerChoice p Integer
-
-    -- | A composite player choice made up from responses of two choices.
-    Multi :: PlayerChoice p a -> PlayerChoice p b -> PlayerChoice p (a, b)
-
--- | Identifies a primitive action in a game that modifies or uses non-public
--- information. These require coordination between players somehow.
-data GameInteract p a where
-
-    -- | The given player draws the given amount of cards from their deck.
-    -- Returns the identifiers for the drawn cards.
-    Draw :: Player -> Integer -> GameInteract p [Object]
-
-    -- | The given player has to make a choice.
-    Choice :: Player -> PlayerChoice p a -> GameInteract p a
-
-    -- | All players have to make a choice.
-    ChoiceAll :: PlayerChoice p a -> GameInteract p (Map Player a)
-
-    -- | A public random value is generated.
-    Rand :: Rand a -> GameInteract p a
-
-    -- | The game is paused until a human decides to continue it, giving the
-    -- humans a chance to see what is happening.
-    Pause :: GameInteract p ()
-
--- | Identifies a simple action in a game that modifies only public
--- information.
-data GameEffect p a where
-
-    -- | The given player gains the given number of coins (or loses, when
-    -- negative). If this is negative, it may not be more coins than the plaer
-    -- has.
-    Bank :: Player -> Integer -> GameEffect p ()
-
--- | Identifies a primitive action in a game.
-data GameAction p a where
-
-    -- | An action that requires coordination between players.
-    Interact :: GameInteract p a -> GameAction p a
-
-    -- | An action that can be described as a modification of publicly-
-    -- available information.
-    Effect :: GameEffect p a -> GameAction p a
-
-    -- | Gets the current game state.
-    Read :: GameAction p (GameState p)
-
-    -- | Displays a message to the players.
-    Message :: String -> GameAction p ()
-
-    -- | Performs the given action within the context of a rule, slot or card.
-    -- This is purely for user feedback.
-    Context :: Object -> Game p a -> GameAction p a
-
--- | Describes a complex procedure/action in game logic that produces a result
--- of type @a@, assuming that @p@ encodes primitive operations.
-data Game p a = Game { runGame :: forall m. (Monad m)
-    => (forall b. GameAction p b -> m b) -> m a }
-
-instance Functor (Game p) where
-    fmap = liftM
-instance Applicative (Game p) where
-    pure = return
-    (<*>) = ap
-instance Monad (Game p) where
-    (>>=) game f = Game { runGame = \act ->
-        runGame game act >>= \res -> runGame (f res) act }
-    return x = Game { runGame = \_ -> return x }
-
--- | Type @p@ represents a primitive operation that results in a game value.
-class Primitive p where
-
-    -- | Gets the argument types and result type for a primitive.
-    primitiveType :: p -> ([Type], Type)
-
-    -- | Runs a primitive as a game using the given game as arguments.
-    runPrimitive :: p -> [Game p Value] -> Game p Value
-
--- | Gets the slot types and result type for a term.
-termType :: (Primitive p) => Term p h -> ([Type], Type)
-termType (Slot t) = ([t], t)
-termType (App p args) = (slotTypes, resultType) where
-    (_, resultType) = primitiveType p
-    slotTypes = List.concatMap (\(_, a) -> fst $ termType a) args
-
--- | Constructs a game for a 'GameAction'.
-action :: GameAction p a -> Game p a
-action i = Game { runGame = \act -> act i }
-
--- | Constructs a game from a 'GameInteract'.
-interaction :: GameInteract p a -> Game p a
-interaction = action . Interact
-
--- | constructs a game from a 'GameEffect'.
-effect :: GameEffect p a -> Game p a
-effect = action . Effect
-
--- | Displays a message to the players.
-message :: String -> Game p ()
-message = action . Message
-
--- | Gives context to a game action by associating it with a slot, rule,
--- or card. This is purely for user feedback.
-context :: Object -> Game p a -> Game p a
-context obj = action . Context obj
-
--- | Gets the current game state.
-state :: Game p (GameState p)
-state = action Read
-
--- | The given player draws a card. Returns the identifier for the drawn card.
-draw :: Player -> Game p Object
-draw p = head <$> interaction (Draw p 1)
-
--- | The given player draws the given number of cards.
-drawN :: Player -> Integer -> Game p [Object]
-drawN p n = interaction (Draw p n)
-
--- | The given player gains the given number of coins.
-gainCoins :: Player -> Integer -> Game p ()
-gainCoins p n = effect (Bank p n)
-
--- | The given player loses the given number of coins.
-loseCoins :: Player -> Integer -> Game p ()
-loseCoins p n = effect (Bank p (-n))
-
--- | Gets a public random value.
-rand :: Rand a -> Game p a
-rand = interaction . Rand
-
--- | Pauses the game for a human player to continue it.
-pause :: Game p ()
-pause = interaction Pause
+newtype PlayerChoice g a = PlayerChoice (Program (PlayerChoiceInstr g) a)
+    deriving (Functor, Applicative, Monad)
