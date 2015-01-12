@@ -1,6 +1,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Base (
     Type (..),
@@ -19,9 +21,15 @@ module Base (
     Value (..),
     Manner (..),
     Term (..),
-    toConTerm
+    toConTerm,
+    AnyTerm (..),
+    fromAnyTerm,
+    Place,
+    substitute,
+    substituteInside
 ) where
 
+import GHC.Exts (Constraint)
 import Data.Typeable
 import Control.Applicative
 
@@ -62,8 +70,13 @@ raiseType Condition inner = inner (Proxy :: Proxy Condition)
 raiseType Player inner = inner (Proxy :: Proxy Player)
 raiseType Number inner = inner (Proxy :: Proxy Number)
 
+-- | Constraint implied by @IsTypeList a@
+type family TypeListImpl (a :: [Type]) :: Constraint where
+    TypeListImpl '[] = ()
+    TypeListImpl (a ': b) = (IsType a, IsTypeList b)
+
 -- | @a@ is a valid list of 'Type's.
-class Typeable a => IsTypeList (a :: [Type]) where
+class (TypeListImpl a, Typeable a) => IsTypeList (a :: [Type]) where
 
     -- | Constructs an 'FList' using this type-list as a template.
     mkTermList :: (Applicative g) => Proxy a
@@ -104,7 +117,7 @@ data Term (p :: [Type] -> Type -> *) (m :: Manner) (r :: Type) where
 
     -- | An application of a primitive to a list of terms representing
     -- arguments.
-    App :: p a r -> FList (Term p m) a -> Term p m r
+    App :: (IsTypeList a) => p a r -> FList (Term p m) a -> Term p m r
 
 -- | Tries converting a term into a concrete term.
 toConTerm :: Term p m r -> Maybe (Term p Con r)
@@ -113,3 +126,51 @@ toConTerm (App prim list) = App prim <$> toConList list where
     toConList :: FList (Term p m) r -> Maybe (FList (Term p Con) r)
     toConList FNil = Just FNil
     toConList (FCons a b) = FCons <$> toConTerm a <*> toConList b
+
+-- | A term of any result type.
+data AnyTerm p m = forall r. (IsType r) => AnyTerm (Term p m r)
+
+-- | Tries giving an 'AnyTerm' a specific result type.
+fromAnyTerm :: forall p m r. (IsType r) => AnyTerm p m -> Maybe (Term p m r)
+fromAnyTerm (AnyTerm inner) = withInner inner where
+    withInner :: forall p m q. (IsType q) => Term p m q -> Maybe (Term p m r)
+    withInner inner = case eqT :: Maybe (r :~: q) of
+        Just Refl -> Just inner
+        Nothing -> Nothing
+
+-- | Identifies a place in a 'Term' where substitutions may be possible. All
+-- possible substitutions for a term can be described by a place and a target
+-- term, however, not all places and target terms correspond to a valid
+-- substitution.
+--
+-- Places are implemented as a list of argument indices. To demonstrate:
+-- * @[]@ corresponds to the entire term.
+-- * @[0]@ corresponds to the first argument (assuming the term is 'App').
+-- * @[1, 0]@ corresponds to the first argument of the second argument.
+type Place = [Int]
+
+-- | Tries substituting a sub-term within a term, returning 'Nothing' if the
+-- place does not exist or there is a type mismatch.
+substitute :: forall p m.
+    AnyTerm p m -- ^ base term to substitute
+    -> Place -- ^ place to substitute in
+    -> AnyTerm p m -- ^ term to substitute in
+    -> Maybe (AnyTerm p m)
+substitute _ [] target = Just target
+substitute (AnyTerm Slot) (_ : _) _ = Nothing
+substitute (AnyTerm (App prim args)) (i : is) target = res where
+    substituteArg :: forall a. (IsTypeList a)
+        => FList (Term p m) a -> Int -> Maybe (FList (Term p m) a)
+    substituteArg FNil _ = Nothing
+    substituteArg (FCons arg rem) 0 = do
+        nArg <- substitute (AnyTerm arg) is target
+        nArg <- fromAnyTerm nArg
+        return $ FCons nArg rem
+    substituteArg (FCons arg rem) n = FCons arg <$> substituteArg rem (n - 1)
+    res = (AnyTerm . App prim) <$> substituteArg args i
+
+-- | Like 'substitute', but disallows substitutions of the whole term.
+substituteInside :: forall p m r. (IsType r)
+    => Term p m r -> Place
+    -> AnyTerm p m -> Maybe (Term p m r)
+substituteInside t p x = substitute (AnyTerm t) p x >>= fromAnyTerm

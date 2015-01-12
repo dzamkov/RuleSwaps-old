@@ -22,7 +22,6 @@ module Prim (
 import Prelude hiding (print)
 import Base
 import Game hiding (Player, Prim)
-import qualified Game
 import Data.Typeable
 import Data.Maybe (fromJust)
 import Control.Monad.State (StateT, runStateT, get, put)
@@ -81,8 +80,8 @@ toPrim PlyDrawN = mkPrim PlyDrawN
     ["", " draws ", " cards"]
     (T :: T '[Player, Number] Action) $
     \eval (FCons ply (FCons num FNil)) -> do
-        Value ply <- eval ply
-        Value num <- eval num
+        Value _ <- eval ply
+        Value _ <- eval num
         error "implement PlyDrawN" -- TODO
         return $ Value ()
 toPrim PlyGainCoin = mkPrim PlyGainCoin
@@ -180,7 +179,10 @@ listToTerm list = res where
 conListToTerm :: (IsType r) => [BasePrim] -> Maybe (Term Prim Con r)
 conListToTerm list = listToTerm (Just <$> list) >>= toConTerm
 
--- Useful instance is useful
+-- Useful instances are useful
 instance Show (Term Prim m r) where
     showsPrec n term = showParen (n > 0)
         (("fromMaybe $ listToTerm " ++) . shows (termToList term))
+instance Show (AnyTerm Prim m) where
+    showsPrec n (AnyTerm term) = showParen (n >= 11)
+        (("AnyTerm " ++) . showsPrec 11 term)

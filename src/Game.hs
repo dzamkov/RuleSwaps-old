@@ -67,7 +67,7 @@ type family Prim g :: [Type] -> Type -> *
 type Value g = Base.Value (Player g)
 
 -- | Describes a card within the game context @g@.
-data CardInfo g = forall r. (IsType r) => CardInfo (Term (Prim g) Abs r)
+type CardInfo g = AnyTerm (Prim g) Abs
 
 -- | Describes a deck within the game context @g@ by giving information for
 -- the unique cards in the deck, along with their multiplicites.

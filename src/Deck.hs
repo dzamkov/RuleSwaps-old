@@ -1,8 +1,5 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 module Deck (
     card,
@@ -12,14 +9,12 @@ module Deck (
 import Prelude hiding (take)
 import Base
 import Prim
-import Game hiding (Prim)
-import qualified Game
 import Data.Typeable
 import Data.Maybe (fromMaybe)
 
 -- | Shorthand for describing a card.
-card :: (Game.Prim g ~ Prim) => Type -> [Maybe BasePrim] -> CardInfo g
-card t list = raiseType t $ \(_ :: Proxy r) -> CardInfo
+card :: Type -> [Maybe BasePrim] -> AnyTerm Prim Abs
+card t list = raiseType t $ \(_ :: Proxy r) -> AnyTerm
     ((fromMaybe (error "bad card") $ listToTerm list) :: Term Prim Abs r)
 
 -- Shorthand for this next part
@@ -27,7 +22,7 @@ slot = Nothing
 p = Just
 
 -- | The standard deck.
-standard :: (Game.Prim g ~ Prim) => DeckInfo g
+standard :: [(Integer, AnyTerm Prim Abs)]
 standard = [
 
     -- Drawing cards
