@@ -304,7 +304,7 @@ startTerminal close = do
 
     -- Key input
     let keyListener = do
-        key <- awaitBlocking getHiddenChar (source stopKeyChan)
+        key <- awaitBlock getHiddenChar (source stopKeyChan)
         case key of
             Left key -> do
                 send keyChan key

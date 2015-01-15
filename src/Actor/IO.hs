@@ -2,8 +2,8 @@
 {-# LANGUAGE EmptyDataDecls #-}
 {-# LANGUAGE ViewPatterns #-}
 module Actor.IO (
-    awaitBlocking,
-    blocking,
+    awaitBlock,
+    block,
     IOContext,
     runActorIO,
     startActorIO
@@ -96,8 +96,8 @@ awaitIO (Source inputs) handled cont = res where
             setup inputs
 
 -- | Lifts a blocking IO effect, allowing it to be interrupted by a source.
-awaitBlocking :: IO a -> Source IOContext b -> ActorT IOContext IO (Either a b)
-awaitBlocking inner int = do
+awaitBlock :: IO a -> Source IOContext b -> ActorT IOContext IO (Either a b)
+awaitBlock inner int = do
     var <- liftIO newEmptyMVar
     liftIO $ do
         handled <- newIORef False
@@ -108,11 +108,11 @@ awaitBlocking inner int = do
         awaitIO int (Just handled) $ \msg -> do
             putMVar var $ Right msg
             killThread thread
-    blocking $ takeMVar var
+    block $ takeMVar var
 
 -- | Lifts a blocking IO effect.
-blocking :: IO a -> ActorT IOContext IO a
-blocking inner = do
+block :: IO a -> ActorT IOContext IO a
+block inner = do
     resChan <- spawn
     liftIO $ forkIO $ startActorIO $ do
         res <- liftIO inner
