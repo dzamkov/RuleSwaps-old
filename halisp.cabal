@@ -7,6 +7,9 @@ executable rule-swaps
   hs-source-dirs: src
   main-is:		  Main.hs
   ghc-options:    -threaded
+                  -Wall
+                  -fno-warn-unused-do-bind
+                  -fno-warn-name-shadowing
   build-depends:  base,
                   mtl,
                   transformers,
