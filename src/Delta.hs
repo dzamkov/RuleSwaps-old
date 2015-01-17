@@ -9,7 +9,7 @@ module Delta (
     Delta (..),
     keep,
     set,
-    stride,
+    change,
     DeltaRel (..),
     Complex,
     checkD,
@@ -18,10 +18,16 @@ module Delta (
     fstD,
     sndD,
     plex2D,
-    break2D
+    break2D,
+    DeltaArrow (..),
+    ArrowDelta (..),
+    DMap
 ) where
 
+import Prelude hiding (id, (.))
 import Control.Applicative
+import Control.Category
+import Control.Arrow
 
 -- | A value of type @a@ associated with information about "how it got there".
 -- A @Delta a@ contains the information needed to efficiently evolve a known
@@ -38,7 +44,7 @@ data Delta a where
 
     -- | Specifies the initial and final values, but gives no information about
     -- their relationship.
-    Stride :: a -> a -> Delta a
+    Change :: a -> a -> Delta a
 
     -- | Specifies an interesting type-dependent relationship between the
     -- initial and final values.
@@ -50,16 +56,16 @@ deriving instance (Show a, Show (Complex a)) => Show (Delta a)
 instance Functor Delta where
     fmap f (Keep x) = Keep (f x)
     fmap f (Set x) = Set (f x)
-    fmap f (Stride x y) = Stride (f x) (f y)
+    fmap f (Change x y) = Change (f x) (f y)
     fmap f (Complex c) = case initial c of
-        Just initial -> Stride (f initial) (f $ final c)
+        Just initial -> Change (f initial) (f $ final c)
         Nothing -> Set (f $ final c)
 instance Applicative Delta where
     pure = Keep
     (<*>) (Keep f) d = fmap f d
     (<*>) (Set f) d = Set (f $ final d)
-    (<*>) (Stride f g) d = case initial d of
-        Just initial -> Stride (f initial) (g $ final d)
+    (<*>) (Change f g) d = case initial d of
+        Just initial -> Change (f initial) (g $ final d)
         Nothing -> Set (g $ final d)
     (<*>) (Complex df) (Keep x) = df x
     (<*>) (Complex df) (Set x) = Set (final $ df x)
@@ -67,7 +73,7 @@ instance Applicative Delta where
         let fin = final $ df $ final d
         in case initial d of
             Just di -> case initial (df di) of
-                Just initial -> Stride initial fin
+                Just initial -> Change initial fin
                 Nothing -> Set fin
             Nothing -> Set fin
 
@@ -84,11 +90,11 @@ class DeltaRel d a | d -> a where
 instance DeltaRel (Delta a) a where
     initial (Keep x) = Just x
     initial (Set _) = Nothing
-    initial (Stride x _) = Just x
+    initial (Change x _) = Just x
     initial (Complex c) = initial c
     final (Keep x) = x
     final (Set x) = x
-    final (Stride _ x) = x
+    final (Change _ x) = x
     final (Complex c) = final c
 
 -- | Constructs a delta for a value that doesn't change.
@@ -102,8 +108,8 @@ set = Set
 
 -- | Constructs a delta with a known initial and final value but no information
 -- about progression.
-stride :: a -> a -> Delta a
-stride = Stride
+change :: a -> a -> Delta a
+change = Change
 
 -- | Describes the progression of values of type @a@ in an interesting way.
 type family Complex a
@@ -150,11 +156,36 @@ sndD (Complex (_, dy)) = dy
 sndD d = snd <$> d
 
 -- | Constructs a delta for a tuple.
-plex2D :: Delta a -> Delta b -> Delta (a, b)
-plex2D (Keep x) (Keep y) = Keep (x, y)
-plex2D dx dy = Complex (dx, dy)
+plex2D :: (Delta a, Delta b) -> Delta (a, b)
+plex2D (Keep x, Keep y) = Keep (x, y)
+plex2D (dx, dy) = Complex (dx, dy)
 
 -- | Extracts the elements from a delta of a tuple.
 break2D :: Delta (a, b) -> (Delta a, Delta b)
 break2D (Complex (dx, dy)) = (dx, dy)
 break2D d = (fst <$> d, snd <$> d)
+
+-- | Augments an existing arrow type with 'Delta's for inputs and outputs.
+newtype DeltaArrow a b c =
+    DeltaArrow { runDelta :: a (Delta b) (Delta c) }
+
+-- | @a@ is an arrow type that tracks 'Delta's for values.
+class Arrow a => ArrowDelta a where
+
+    -- | Lifts a 'Delta' function to an 'ArrowDelta'.
+    arrD :: (Delta b -> Delta c) -> a b c
+
+instance ArrowDelta (->) where
+    arrD f = final . f . set
+instance Category a => Category (DeltaArrow a) where
+    id = DeltaArrow id
+    (.) (DeltaArrow f) (DeltaArrow g) = DeltaArrow (f . g)
+instance Arrow a => Arrow (DeltaArrow a) where
+    arr f = DeltaArrow (arr (f <$>))
+    first (DeltaArrow a) = DeltaArrow
+        (arr break2D >>> first a >>> arr plex2D)
+instance Arrow a => ArrowDelta (DeltaArrow a) where
+    arrD = DeltaArrow . arr
+
+-- | A mapping that takes 'Delta's into account.
+type DMap = DeltaArrow (->)
