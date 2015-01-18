@@ -5,6 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE ViewPatterns #-}
 module Delta (
     Delta (..),
     keep,
@@ -183,7 +184,11 @@ instance Category a => Category (DeltaArrow a) where
 instance Arrow a => Arrow (DeltaArrow a) where
     arr f = DeltaArrow (arr (f <$>))
     first (DeltaArrow a) = DeltaArrow
-        (arr break2D >>> first a >>> arr plex2D)
+        (break2D ^>> first a >>^ plex2D)
+instance ArrowApply a => ArrowApply (DeltaArrow a) where
+    app = DeltaArrow (f . break2D ^>> app) where
+        f (Keep (DeltaArrow a), di) = (a, di)
+        f (final -> DeltaArrow a, di) = (a >>^ set . final, di)
 instance Arrow a => ArrowDelta (DeltaArrow a) where
     arrD = DeltaArrow . arr
 
