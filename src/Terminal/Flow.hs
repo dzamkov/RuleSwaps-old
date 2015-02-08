@@ -29,26 +29,15 @@ type Space = Width
 -- | Describes a word in a flow.
 type Word m = m (Color, Point) -> Paint m
 
--- | A flow with a fixed list of items.
-data StaticFlow m = StaticFlow Space [(Word m, m Width, Space)]
-instance Monoid (StaticFlow m) where
-    mempty = StaticFlow 0 []
-    mappend (StaticFlow px []) (StaticFlow py yi) = StaticFlow (px + py) yi
-    mappend (StaticFlow px (xi : xis)) y = StaticFlow px (go xi xis y) where
-        go (d, w, s) [] (StaticFlow py yi) = (d, w, s + py) : yi
-        go xi (nXi : xis) y = xi : go nXi xis y
-
 -- | A layout type for a linear figure which can be broken up at certain
 -- points, much like text.
-data Flow m
-    = Static (StaticFlow m)
-    | (Monad m) => Dynamic (m (StaticFlow m))
-instance Applicative m => Monoid (Flow m) where
-    mempty = Static mempty
-    mappend (Static x) (Static y) = Static (mappend x y)
-    mappend (Static x) (Dynamic y) = Dynamic (mappend x <$> y)
-    mappend (Dynamic x) (Static y) = Dynamic (flip mappend y <$> x)
-    mappend (Dynamic x) (Dynamic y) = Dynamic (mappend <$> x <*> y)
+data Flow m = Flow Space [(Word m, m Width, Space)]
+instance Monoid (Flow m) where
+    mempty = Flow 0 []
+    mappend (Flow px []) (Flow py yi) = Flow (px + py) yi
+    mappend (Flow px (xi : xis)) y = Flow px (go xi xis y) where
+        go (d, w, s) [] (Flow py yi) = (d, w, s + py) : yi
+        go xi (nXi : xis) y = xi : go nXi xis y
 
 -- | Describes a possible alignment of flow items within a line.
 newtype Alignment = Alignment {
@@ -156,11 +145,7 @@ wordL width = Layout $ \alignment target fw bw ->
 
 -- | Gets the minimum width that the given flow can be placed with.
 minWidth :: (Applicative m) => Flow m -> m Width
-minWidth flow = res where
-    go (StaticFlow _ xs) = foldr (\(_, w, _) a -> max <$> a <*> w) (pure 0) xs
-    res = case flow of
-        Static info -> go info
-        Dynamic info -> info >>= go
+minWidth (Flow _ xs) = foldr (\(_, w, _) a -> max <$> a <*> w) (pure 0) xs
 
 -- | Places a flow, giving its alignment and width (which must be at least
 -- 'minWidth'). Returns the final height of the flow, along with a function
@@ -168,7 +153,7 @@ minWidth flow = res where
 placeFlow :: (Paintable m) => Flow m
     -> Alignment -> m Width
     -> (m Height, m (Color, Point) -> Paint m)
-placeFlow flow alignment target = res where
+placeFlow (Flow _ items) alignment target = res where
     clear pOffset nOffset = toPaint .
         ((\(px, py) (nx, ny) target (back, (x, y)) ->
             if py == ny then Draw.space back (x + px, y + py) (nx - px)
@@ -184,23 +169,17 @@ placeFlow flow alignment target = res where
             word (transform <$> offset <*> context) `mix`
             placeRem (addWidth <$> offset <*> width) nOffset context)
         <$> (wordL width <* spaceL (pure space)) <*> placeItems items
-    go (StaticFlow _ items) = (height, res) where
-        (l, height) = runFixLayout (placeItems items) alignment target
-        pOffset = pure (Width 0, Height 0)
-        nOffset = (\w h -> (w, h)) <$> target <*> height
-        res = l pOffset nOffset
-    res = case flow of
-        Static info -> go info
-        Dynamic info ->
-            let r = go <$> info
-            in (join (fst <$> r), defer . ((snd <$> r) <*>) . pure)
+    (l, height) = runFixLayout (placeItems items) alignment target
+    pOffset = pure (Width 0, Height 0)
+    nOffset = (\w h -> (w, h)) <$> target <*> height
+    res = (height, l pOffset nOffset)
 
 instance Paintable m => Markup.Flow Terminal (Flow m) where
-    weakSpace width = Static $ StaticFlow width []
+    weakSpace width = Flow width []
     strongSpace width = res where
         paint (back, offset) = Draw.space back offset width
-        res = Static $ StaticFlow 0 [(toPaint . (paint <$>), pure width, 0)]
+        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
     tightText Font fore str = res where
         width = Width $ length str
         paint (back, offset) = Draw.string (back, fore) offset str
-        res = Static $ StaticFlow 0 [(toPaint . (paint <$>), pure width, 0)]
+        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
