@@ -150,7 +150,7 @@ minWidth (Flow _ xs) = foldr (\(_, w, _) a -> max <$> a <*> w) (pure 0) xs
 -- | Places a flow, giving its alignment and width (which must be at least
 -- 'minWidth'). Returns the final height of the flow, along with a function
 -- which draws it given back color and absolute offset.
-placeFlow :: (Paintable m) => Flow m
+placeFlow :: (Applicative m) => Flow m
     -> Alignment -> m Width
     -> (m Height, m (Color, Point) -> Paint m)
 placeFlow (Flow _ items) alignment target = res where
@@ -174,7 +174,7 @@ placeFlow (Flow _ items) alignment target = res where
     nOffset = (\w h -> (w, h)) <$> target <*> height
     res = (height, l pOffset nOffset)
 
-instance Paintable m => Markup.Flow Terminal (Flow m) where
+instance Applicative m => Markup.Flow Terminal (Flow m) where
     weakSpace width = Flow width []
     strongSpace width = res where
         paint (back, offset) = Draw.space back offset width

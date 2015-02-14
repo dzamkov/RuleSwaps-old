@@ -1,18 +1,42 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ImplicitParams #-}
+{-# LANGUAGE RecursiveDo #-}
 module Main where
 
-import Actor
 import Deck
 import Markup hiding (Flow)
 import Terminal.Context
 import Terminal.Flow
 import Terminal.Draw
 import Terminal.Paint
+import Terminal.Input
 import qualified System.Console.ANSI as ANSI
+import Reactive.Banana
+import Reactive.Banana.Frameworks
 import Control.Monad.Identity
 import Control.Applicative
 
+main :: IO ()
+main = do
+    (keyAddHandler, onKey) <- newAddHandler
+    network <- compile $ mdo
+        key <- fromChanges ' ' keyAddHandler
+        let appr = (Color ANSI.Dull ANSI.Magenta, Color ANSI.Vivid ANSI.Green)
+        let paintTest = foldl1 mix [
+                toPaint $ pure $ string appr (0, 0) "Last key was:",
+                toPaint $ string appr (0, 1) . (: []) <$> key,
+                toPaint $ pure $ string appr (0, 3) "Terminal size is:",
+                toPaint $ string appr (0, 4) . show <$> size]
+        size <- runPaint paintTest
+        return ()
+    actuate network
+    let listenKey = do
+        ch <- getHiddenChar
+        onKey ch
+        unless (ch == 'q') listenKey
+    listenKey
+
+{-
 test :: Flow Identity
 test = text Font (Color ANSI.Vivid ANSI.Green) $
     take 500 $ cycle "testing the flow because its good to be "
@@ -24,33 +48,9 @@ main = do
     let height = runIdentity height'
     let draw = runIdentity $ fromPaint $ paint $ pure (back, (0, 0))
     runDrawInline height draw
-
-{-
-import Actor
-import Deck
-import System.Console.ANSI
-import Terminal.Widget
-import qualified Terminal.UI as UI
-import Control.Monad (replicateM_)
-
-main :: IO ()
-main = runActorIO $ do
-    quitChan <- spawn
-    stopTerminalChan <- spawn
-    exitChan <- spawn
-    fork $ do
-        await $ source quitChan
-        send stopTerminalChan ()
-        send exitChan ()
-    (global, inst) <- startTerminal $ source stopTerminalChan
-    let ?style = UI.casino
-    let context = UI.MainContext {
-        UI.quit = send quitChan () }
-    fork $ liftActor $ runWidget global inst $ UI.main context
-    await $ source exitChan
+-}
 
 reset :: IO ()
 reset = do
-    setSGR [Reset]
+    ANSI.setSGR [ANSI.Reset]
     replicateM_ 30 $ putStrLn ""
--}
