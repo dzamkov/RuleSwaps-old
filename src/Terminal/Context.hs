@@ -29,9 +29,9 @@ data Terminal
 {-# ANN module "HLint: ignore Unused LANGUAGE pragma" #-}
 instance Context Terminal where
     newtype Length Terminal Horizontal = Width Int
-        deriving (Eq, Ord, Show, Num, Bounded)
+        deriving (Eq, Ord, Enum, Show, Num, Real, Integral, Bounded)
     newtype Length Terminal Vertical = Height Int
-        deriving (Eq, Ord, Show, Num, Bounded)
+        deriving (Eq, Ord, Enum, Show, Num, Real, Integral, Bounded)
     data Material Terminal = Color ANSI.ColorIntensity ANSI.Color
         deriving (Eq, Ord, Show)
     data Font Terminal = Font

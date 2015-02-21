@@ -81,7 +81,7 @@ text font fore = breakSpace where
 class Block u a | a -> u where
 
     -- | A completely transparent block with ambiguity in width and height.
-    empty :: a
+    clear :: a
 
     -- | Places one block beside another, causing the heights to coincide.
     -- The method of distributing widths is undefined.
@@ -93,7 +93,7 @@ class Block u a | a -> u where
 
     -- | Places one block over another, causing the widths, heights, and
     -- positions to coincide. This has no effect if the first block is
-    -- completely opaque.
+    -- completely opaque and can fit entirely over the second.
     over :: a -> a -> a
 
     -- | Resolves the width of a block to be as close to the given value as
@@ -105,4 +105,4 @@ class Block u a | a -> u where
     setHeight :: Height u -> a -> a
 
     -- | Sets the background material for the transparent portions of a block.
-    withBack :: Material u -> a -> a
+    setBack :: Material u -> a -> a

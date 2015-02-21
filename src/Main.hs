@@ -4,18 +4,41 @@
 module Main where
 
 import Deck
-import Markup hiding (Flow)
+import Markup hiding (Flow, Block)
 import Terminal.Context
-import Terminal.Flow
+import Terminal.Flow (Flow)
+import Terminal.Block (Block, place)
 import Terminal.Draw
 import Terminal.Paint
 import Terminal.Input
 import qualified System.Console.ANSI as ANSI
-import Reactive.Banana
+import Reactive.Banana hiding (Identity)
 import Reactive.Banana.Frameworks
 import Control.Monad.Identity
 import Control.Applicative
 
+testFlow :: Flow Identity
+testFlow = text Font (Color ANSI.Vivid ANSI.Green) $
+    take 500 $ cycle "testing the flow because its good to be "
+
+testBlock :: Block Identity
+testBlock = res where
+    green = Color ANSI.Vivid ANSI.Green
+    red = Color ANSI.Vivid ANSI.Red
+    blue = Color ANSI.Vivid ANSI.Blue
+    square c = setBack c clear
+    res = setWidth 10 $ setHeight 10 $
+        ((square green ||| square blue) === square red)
+
+main :: IO ()
+main = do
+    let back = Color ANSI.Dull ANSI.Magenta
+    let (_, height', paint) = place testBlock undefined undefined
+    let height = runIdentity height'
+    let draw = runIdentity $ fromPaint $ paint $ pure (Just back, (0, 0))
+    runDrawInline height draw
+
+{-
 main :: IO ()
 main = do
     (keyAddHandler, onKey) <- newAddHandler
@@ -35,19 +58,6 @@ main = do
         onKey ch
         unless (ch == 'q') listenKey
     listenKey
-
-{-
-test :: Flow Identity
-test = text Font (Color ANSI.Vivid ANSI.Green) $
-    take 500 $ cycle "testing the flow because its good to be "
-
-main :: IO ()
-main = do
-    let back = Color ANSI.Dull ANSI.Magenta
-    let (height', paint) = placeFlow test center (pure 50)
-    let height = runIdentity height'
-    let draw = runIdentity $ fromPaint $ paint $ pure (back, (0, 0))
-    runDrawInline height draw
 -}
 
 reset :: IO ()

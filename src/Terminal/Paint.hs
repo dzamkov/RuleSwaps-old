@@ -12,7 +12,6 @@ module Terminal.Paint (
 import Terminal.Context
 import Terminal.Draw
 import qualified System.Console.Terminal.Size as Size
-import System.Console.ANSI (cursorUp)
 import Data.IORef
 import Reactive.Banana
 import Reactive.Banana.Frameworks
@@ -66,7 +65,7 @@ updates (Over hi lo) = do
 runPaint :: Frameworks t => Paint (Behavior t)
     -> Moment t (Behavior t (Width, Height))
 runPaint paint = do
-    (sizeChanged, changeSize) <- newEvent -- TODO: polling for changeSize
+    (sizeChanged, _) <- newEvent -- TODO: polling for changeSize
     let getSize = do
         Just win <- Size.size
         return (Width $ Size.width win, Height $ Size.height win)

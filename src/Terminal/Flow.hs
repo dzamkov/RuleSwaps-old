@@ -5,7 +5,7 @@
 module Terminal.Flow (
     Flow,
     minWidth,
-    placeFlow,
+    place,
     Alignment,
     left,
     center,
@@ -27,12 +27,12 @@ import Control.Applicative
 type Space = Width
 
 -- | Describes a word in a flow.
-type Word m = m (Color, Point) -> Paint m
+type Word f = f (Color, Point) -> Paint f
 
--- | A layout type for a linear figure which can be broken up at certain
--- points, much like text.
-data Flow m = Flow Space [(Word m, m Width, Space)]
-instance Monoid (Flow m) where
+-- | A figure, based in the terminal, which is linear and can be broken up at
+-- certain points, much like text.
+data Flow f = Flow Space [(Word f, f Width, Space)]
+instance Monoid (Flow f) where
     mempty = Flow 0 []
     mappend (Flow px []) (Flow py yi) = Flow (px + py) yi
     mappend (Flow px (xi : xis)) y = Flow px (go xi xis y) where
@@ -79,19 +79,19 @@ center = compact (Width . (`div` 2) . cells)
 
 -- | An applicative interface for flow layout, defined by 'runLayout', 'spaceL'
 -- and 'wordL'.
-data Layout m a = Layout {
+data Layout f a = Layout {
 
     -- | Performs layout, given the alignment, target line width,
     -- initial forward state, and initial backward state.
-    runLayout :: Alignment -> m Width
-        -> m (Width, Y, [(Width, Space)]) -> m [X]
-        -> (a, m (Width, Y, [(Width, Space)]), m [X]) }
+    runLayout :: Alignment -> f Width
+        -> f (Width, Y, [(Width, Space)]) -> f [X]
+        -> (a, f (Width, Y, [(Width, Space)]), f [X]) }
 
-instance Functor (Layout m) where
+instance Functor (Layout f) where
     fmap f layout = Layout $ \alignment width fw bw ->
         let (res, nFw, nBw) = runLayout layout alignment width fw bw
         in (f res, nFw, nBw)
-instance Applicative (Layout m) where
+instance Applicative (Layout f) where
     pure res = Layout $ \_ _ fw bw -> (res, fw, bw)
     (<*>) a b = Layout $ \alignment width fw bw ->
         let (aRes, iFw, nBw) = runLayout a alignment width fw iBw
@@ -108,10 +108,10 @@ finishLine alignment target (x, _, (w, s) : items) = reverse $
 
 -- | Performs layout using default forward and backward state. Returns
 -- the results and the final height.
-runFixLayout :: (Applicative m)
-    => Layout m a
-    -> Alignment -> m Width
-    -> (a, m Height)
+runFixLayout :: (Applicative f)
+    => Layout f a
+    -> Alignment -> f Width
+    -> (a, f Height)
 runFixLayout layout alignment target = (res, height) where
     fw = pure (Width 0, Height 0, [])
     bw = finishLine alignment <$> target <*> nFw
@@ -119,7 +119,7 @@ runFixLayout layout alignment target = (res, height) where
     height = (\(_, y, items) -> if null items then y else y + 1) <$> nFw
 
 -- | Designates a breaking space in a layout.
-spaceL :: (Applicative m) => m Space -> Layout m ()
+spaceL :: (Applicative f) => f Space -> Layout f ()
 spaceL space = Layout $ \alignment target fw bw ->
     let nS = (\target space (x, y, items) -> case (x, items) of
           (_, []) -> ((0, y, []), Just [])
@@ -132,7 +132,7 @@ spaceL space = Layout $ \alignment target fw bw ->
 
 -- | Designates a word (non-breaking) in a layout. The offset of the word in
 -- the layout is returned.
-wordL :: (Applicative m) => m Width -> Layout m (m Offset)
+wordL :: (Applicative f) => f Width -> Layout f (f Offset)
 wordL width = Layout $ \alignment target fw bw ->
     let nS = (\target width (x, y, items) -> case x of
             x | x + width >= target -> ((width, y + 1, [(width, 0)]),
@@ -144,16 +144,16 @@ wordL width = Layout $ \alignment target fw bw ->
         nFw, fromMaybe <$> (tail <$> bw) <*> (snd <$> nS))
 
 -- | Gets the minimum width that the given flow can be placed with.
-minWidth :: (Applicative m) => Flow m -> m Width
+minWidth :: (Applicative f) => Flow f -> f Width
 minWidth (Flow _ xs) = foldr (\(_, w, _) a -> max <$> a <*> w) (pure 0) xs
 
 -- | Places a flow, giving its alignment and width (which must be at least
 -- 'minWidth'). Returns the final height of the flow, along with a function
 -- which draws it given back color and absolute offset.
-placeFlow :: (Applicative m) => Flow m
-    -> Alignment -> m Width
-    -> (m Height, m (Color, Point) -> Paint m)
-placeFlow (Flow _ items) alignment target = res where
+place :: (Applicative f) => Flow f
+    -> Alignment -> f Width
+    -> (f Height, f (Color, Point) -> Paint f)
+place (Flow _ items) alignment target = res where
     clear pOffset nOffset = toPaint .
         ((\(px, py) (nx, ny) target (back, (x, y)) ->
             if py == ny then Draw.space back (x + px, y + py) (nx - px)
@@ -174,7 +174,7 @@ placeFlow (Flow _ items) alignment target = res where
     nOffset = (\w h -> (w, h)) <$> target <*> height
     res = (height, l pOffset nOffset)
 
-instance Applicative m => Markup.Flow Terminal (Flow m) where
+instance Applicative f => Markup.Flow Terminal (Flow f) where
     weakSpace width = Flow width []
     strongSpace width = res where
         paint (back, offset) = Draw.space back offset width
