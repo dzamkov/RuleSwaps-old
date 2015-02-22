@@ -9,7 +9,8 @@ module Terminal.Flow (
     Alignment,
     left,
     center,
-    right
+    right,
+    fromAlignment
 ) where
 
 import Prelude hiding (break)
@@ -76,6 +77,13 @@ right = compact id
 -- | Aligns all items compactly in the center.
 center :: Alignment
 center = compact (Width . (`div` 2) . cells)
+
+-- | Converts a 'Markup.Alignment' into an alignment a flow can use.
+fromAlignment :: Markup.Alignment -> Alignment
+fromAlignment Markup.Left = left
+fromAlignment Markup.Center = center
+fromAlignment Markup.Right = right
+fromAlignment Markup.Justify = center -- TODO
 
 -- | An applicative interface for flow layout, defined by 'runLayout', 'spaceL'
 -- and 'wordL'.
@@ -171,7 +179,7 @@ place (Flow _ items) alignment target = res where
         <$> (wordL width <* spaceL (pure space)) <*> placeItems items
     (l, height) = runFixLayout (placeItems items) alignment target
     pOffset = pure (Width 0, Height 0)
-    nOffset = (\w h -> (w, h)) <$> target <*> height
+    nOffset = (\h -> (0, h)) <$> height
     res = (height, l pOffset nOffset)
 
 instance Applicative f => Markup.Flow Terminal (Flow f) where

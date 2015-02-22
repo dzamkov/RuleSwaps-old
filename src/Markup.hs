@@ -97,12 +97,26 @@ class Block u a | a -> u where
     over :: a -> a -> a
 
     -- | Resolves the width of a block to be as close to the given value as
-    -- possible.
+    -- possible without hiding any content.
     setWidth :: Width u -> a -> a
 
     -- | Resolves the height of a block to be as close to the given value as
-    -- possible.
+    -- possible without hiding any content.
     setHeight :: Height u -> a -> a
 
     -- | Sets the background material for the transparent portions of a block.
     setBack :: Material u -> a -> a
+
+-- | Identifies a possible alignment for the lines within a flow.
+data Alignment
+    = Left
+    | Center
+    | Right
+    | Justify
+
+-- | @a@ is a 'Flow' figure that can be converted into a 'Block' figure of
+-- type @b@.
+class (Flow u a, Block u b) => FlowToBlock u a b where
+
+    -- | Converts a flow into a translucent block using the given alignment.
+    blockify :: Alignment -> a -> b

@@ -9,6 +9,8 @@ import qualified Markup
 import qualified Terminal.Draw as Draw
 import Terminal.Context
 import Terminal.Paint
+import Terminal.Flow (Flow)
+import qualified Terminal.Flow as Flow
 import Data.Ratio
 import Control.Applicative
 
@@ -27,6 +29,7 @@ data Size a
     -- | The axis has a length dependent on the other axis. It is not possible
     -- to specify the length directly.
     | Dep
+    deriving (Show)
 
 -- | Specifies the opacity of a block.
 data Opacity
@@ -40,6 +43,7 @@ data Opacity
     -- | The block has transparent parts (such as those around text) that
     -- /must/ be given a background color.
     | Transparent
+    deriving (Eq, Ord, Show)
 
 -- | A figure, based in the terminal, which takes up a rectangular region.
 data Block f = Block {
@@ -106,7 +110,7 @@ stack Dep (Vary yMinLen _) = (Dep, const (undefined, yMinLen))
 stack Dep Dep = (Dep, const (undefined, undefined))
 
 -- | Combines the 'Size's for blocks that are stacked against the axis in
--- question, such that both blocks should have the same length.
+-- question such that both blocks have the same length.
 mediate :: (Applicative f, Integral a)
     => Size (f a) -> Size (f a)
     -> (Size (f a), Bool, Bool, f a -> (f a, f a))
@@ -303,3 +307,15 @@ instance (Applicative f) => Markup.Block Terminal (Block f) where
                     let nC = (\(_, offset) -> (Just nBack, offset)) <$> c
                     in paint nC
             in (rW, rH, nPaint) }
+
+instance (Applicative f) => Markup.FlowToBlock
+    Terminal (Flow f) (Block f) where
+        blockify alignment' flow =
+            let alignment = Flow.fromAlignment alignment'
+            in Block {
+                width = Vary (Flow.minWidth flow) 1,
+                height = Dep,
+                opacity = Transparent,
+                place = \w _ ->
+                    let (h, paint) = Flow.place flow alignment w
+                    in (w, h, paint . ((\(Just b, p) -> (b, p)) <$>)) }
