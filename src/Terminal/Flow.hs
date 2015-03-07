@@ -1,8 +1,8 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
 module Terminal.Flow (
+    TextStyle,
     Flow,
     minWidth,
     place,
@@ -15,7 +15,7 @@ module Terminal.Flow (
 
 import Prelude hiding (break)
 import qualified Markup
-import Terminal.Context
+import Terminal.Metrics
 import Terminal.Paint
 import qualified Terminal.Draw as Draw
 import Data.Monoid
@@ -30,6 +30,14 @@ type Space = Width
 -- | Describes a word in a flow.
 type Word f = f (Color, Point) -> Paint f
 
+-- | A possible style for text in a flow.
+data TextStyle = TextStyle Color
+instance Monoid TextStyle where
+    mempty = TextStyle (snd defaultAppearance)
+    mappend _ = id
+instance Markup.AttrColor Color TextStyle where
+    color = TextStyle
+
 -- | A figure, based in the terminal, which is linear and can be broken up at
 -- certain points, much like text.
 data Flow f = Flow Space [(Word f, f Width, Space)]
@@ -39,6 +47,18 @@ instance Monoid (Flow f) where
     mappend (Flow px (xi : xis)) y = Flow px (go xi xis y) where
         go (d, w, s) [] (Flow py yi) = (d, w, s + py) : yi
         go xi (nXi : xis) y = xi : go nXi xis y
+instance Applicative f => Markup.Flow Width (Flow f) where
+    weakSpace width = Flow width []
+    strongSpace width = res where
+        paint (back, offset) = Draw.space back offset width
+        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
+    tight = error "'tight' not implemented" -- TODO
+instance Applicative f => Markup.FlowText Width TextStyle (Flow f) where
+    tightText (TextStyle fore) str = res where
+        width = Width $ length str
+        paint (back, offset) = Draw.string (back, fore) offset str
+        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
+    naturalSpace _ = Markup.space 1
 
 -- | Describes a possible alignment of flow items within a line.
 newtype Alignment = Alignment {
@@ -181,13 +201,3 @@ place (Flow _ items) alignment target = res where
     pOffset = pure (Width 0, Height 0)
     nOffset = (\h -> (0, h)) <$> height
     res = (height, l pOffset nOffset)
-
-instance Applicative f => Markup.Flow Terminal (Flow f) where
-    weakSpace width = Flow width []
-    strongSpace width = res where
-        paint (back, offset) = Draw.space back offset width
-        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
-    tightText Font fore str = res where
-        width = Width $ length str
-        paint (back, offset) = Draw.string (back, fore) offset str
-        res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]

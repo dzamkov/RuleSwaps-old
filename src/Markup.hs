@@ -1,87 +1,71 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE TypeFamilies #-}
 module Markup where
 
 import Data.Monoid
 
--- | Identifies an axis.
-data Axis
-    = Horizontal
-    | Vertical
-
--- | Type @u@ is a geometric and visual context for a UI that can be created
--- using markup commands.
-class Context u where
-
-    -- | Describes a length along a given axis in the UI system @u@.
-    data Length u (a :: Axis) :: *
-
-    -- | Describes a uniform visual material that can be applied to a figure
-    -- taking a non-zero area.
-    data Material u :: *
-
-    -- | Identifies/describes a font that can be applied to text in this
-    -- context.
-    data Font u :: *
-
-    -- | The width of a natural space in the given font.
-    spaceWidth :: Font u -> Width u
-
--- | Identifies a length along the horizontal axis in the UI system @u@.
-type Width u = Length u Horizontal
-
--- | Identifies a length along the vertical axis in the UI system @u@.
-type Height u = Length u Vertical
-
--- Note: All figure decorators, such as 'setWidth', simply resolve ambiguity
--- in a figure and can not be used to overwrite known parameters. i.e.
--- only the first application of 'setWidth' may have an effect; after that,
--- there is no more ambiguity in the width.
-
--- | @a@ is a flow-like figure in the UI context @u@. A flow is a linear,
--- horizontal arrangement of items interspersed with potential breakpoints.
--- When applied to an area, the flow can be broken in to horizontal pieces
--- in order to fit. Flows are naturally translucent, having no defined
--- background. The monoid instances of @a@ allows concatenation of flows with
--- implied breakpoints between flows.
-class (Context u, Monoid a) => Flow u a | a -> u where
+-- | @a@ is a flow-like figure, a linear arrangment of items interspersed with
+-- potential breakpoints. When applied to an area, the flow can be broken into
+-- horizontal pieces in order to fit. The monoid instance of @a@ can be used
+-- to concatenate flows with implicit breakpoints between them.
+class (Monoid w, Monoid a) => Flow w a | a -> w where
 
     -- | Constructs a weak space of the given width, so called because it
     -- vanishes when it occurs adjacent to a break, regardless of how wide it
     -- is supposed to be.
-    weakSpace :: Width u -> a
+    weakSpace :: w -> a
 
     -- | Constructs a strong space of the given width. Unlike a 'weakSpace', it
     -- will appear with its full width regardless of where it occurs.
-    strongSpace :: Width u -> a
+    strongSpace :: w -> a
 
-    -- | Constructs a figure displaying the given text, with no internal
-    -- breakpoints.
-    tightText :: Font u -> Material u -> String -> a
+    -- | Removes the potential breakpoints from a flow, ensuring that it will
+    -- appear as an unbroken horizontal unit.
+    tight :: a -> a
 
 -- | Alias for 'weakSpace'.
-space :: (Flow u a) => Width u -> a
+space :: (Flow w a) => w -> a
 space = weakSpace
+
+-- | @p@ is a styling description that allows a color of type @c@ to be
+-- specified.
+class Monoid p => AttrColor c p | p -> c where
+
+    -- | Constructs a styling description with the given color.
+    color :: c -> p
+
+-- | @p@ is a styling description for text that allows a font of type @f@
+-- to be specified.
+class Monoid p => AttrFont f p | p -> f where
+
+    -- | Constructs a styling description with the given font.
+    font :: f -> p
+
+-- | @a@ is a flow-like figure with a means of displaying text. The text
+-- can be styled using a description of type @p@.
+class (Flow w a, Monoid p) => FlowText w p a | a -> p where
+
+    -- | Constructs a figure displaying the given text with no internal
+    -- breakpoints.
+    tightText :: p -> String -> a
+
+    -- | A flow item corresponding to a space between words in text with
+    -- the given styling description.
+    naturalSpace :: p -> a
 
 -- | Constructs a figure displaying the given text with natural breakpoints
 -- between each word.
-text :: (Flow u a) => Font u -> Material u -> String -> a
-text font fore = breakSpace where
-    breakWord a [] = tightText font fore (reverse a)
-    breakWord a (' ' : xs) = tightText font fore (reverse a) <> breakSpace xs
+text :: (FlowText w p a) => p -> String -> a
+text style = breakSpace where
+    breakWord a [] = tightText style (reverse a)
+    breakWord a (' ' : xs) = tightText style (reverse a) <> breakSpace xs
     breakWord a (x : xs) = breakWord (x : a) xs
     breakSpace [] = mempty
     breakSpace (' ' : xs) = breakSpace xs
-    breakSpace (x : xs) = space (spaceWidth font) <> breakWord [x] xs
+    breakSpace (x : xs) = naturalSpace style <> breakWord [x] xs
 
--- | @a@ is a block-like figure in the UI context @u@. A block is a
--- rectangular arrangement of items whose size may take a range of values,
--- and which may be translucent or opaque.
-class Block u a | a -> u where
-
-    -- | A completely transparent block with ambiguity in width and height.
-    clear :: a
+-- | @a@ is a block-like figure, appearing as a rectangle whose size may take a
+-- range of values.
+class Block w h a | a -> w h where
 
     -- | Places one block beside another, causing the heights to coincide.
     -- The method of distributing widths is undefined.
@@ -91,21 +75,35 @@ class Block u a | a -> u where
     -- The method of distributing heights is undefined.
     (===) :: a -> a -> a
 
+    -- | Resolves the width of a block to be as close to the given value as
+    -- possible without hiding any content.
+    setWidth :: w -> a -> a
+
+    -- | Resolves the height of a block to be as close to the given value as
+    -- possible without hiding any content.
+    setHeight :: h -> a -> a
+
+-- | @a@ is a block-like figure that allows the construction of solid-color
+-- blocks.
+class Block w h a => BlockSolid w h c a | a -> c where
+
+    -- | Constructs a solid-color block of the given color.
+    solid :: c -> a
+
+-- | @a@ is a block-like figure that may be partially transparent.
+class Block w h a => BlockTrans w h a where
+
+    -- | A completely transparent block with ambiguity in width and height.
+    clear :: a
+
     -- | Places one block over another, causing the widths, heights, and
     -- positions to coincide. This has no effect if the first block is
     -- completely opaque and can fit entirely over the second.
     over :: a -> a -> a
 
-    -- | Resolves the width of a block to be as close to the given value as
-    -- possible without hiding any content.
-    setWidth :: Width u -> a -> a
-
-    -- | Resolves the height of a block to be as close to the given value as
-    -- possible without hiding any content.
-    setHeight :: Height u -> a -> a
-
-    -- | Sets the background material for the transparent portions of a block.
-    setBack :: Material u -> a -> a
+-- | Sets the color of the transparent portions of a block.
+setBack :: (BlockSolid w h c a, BlockTrans w h a) => c -> a -> a
+setBack color hi = over hi $ solid color
 
 -- | Identifies a possible alignment for the lines within a flow.
 data Alignment
@@ -116,7 +114,7 @@ data Alignment
 
 -- | @a@ is a 'Flow' figure that can be converted into a 'Block' figure of
 -- type @b@.
-class (Flow u a, Block u b) => FlowToBlock u a b | a -> b where
+class (Flow w a, Block w h b) => FlowToBlock w h a b | a -> b where
 
     -- | Converts a flow into a translucent block using the given alignment.
     blockify :: Alignment -> a -> b

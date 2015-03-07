@@ -1,5 +1,5 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Terminal.Block (
     Opacity (..),
     Block (..)
@@ -7,26 +7,27 @@ module Terminal.Block (
 
 import qualified Markup
 import qualified Terminal.Draw as Draw
-import Terminal.Context
+import Terminal.Metrics
 import Terminal.Paint
 import Terminal.Flow (Flow)
 import qualified Terminal.Flow as Flow
 import Data.Ratio
 import Control.Applicative
 
--- | Specifies the opacity of a block.
+-- | Specifies the opacity and high-level kind of a block.
 data Opacity
 
-    -- | The block contains no translucent parts.
-    = Opaque
+    -- | The block contains no translucent parts, and may be of a single
+    -- solid color.
+    = Opaque (Maybe Color)
 
     -- | The block contains transparent parts that may be given a color.
-    | Translucent
+    -- If 'True', then the block is entirely transparent.
+    | Translucent Bool
 
     -- | The block has transparent parts (such as those around text) that
     -- /must/ be given a background color.
-    | Transparent
-    deriving (Eq, Ord, Show)
+    | Dependent
 
 -- | A figure, based in the terminal, which takes up a rectangular region.
 data Block f = Block {
@@ -50,43 +51,7 @@ data Block f = Block {
         -> (f Width, f Height,
             f (Maybe Color, Point) -> Paint f) }
 
--- | Multiples an integer by a rational.
-imult :: (Integral a) => Rational -> a -> a
-imult x y = (y * fromInteger (numerator x)) `div` fromInteger (denominator x)
-
--- | Combines the opacities for non-overlapping blocks.
-comps :: Opacity -> Opacity -> Opacity
-comps Transparent _ = Transparent
-comps _ Transparent = Transparent
-comps Translucent _ = Translucent
-comps _ Translucent = Translucent
-comps Opaque Opaque = Opaque
-
--- | Constructs a paint function which paints a translucent block of the given
--- width and height.
-paintEmpty :: (Applicative f)
-    => f Width -> f Height
-    -> f (Maybe Color, Point) -> Paint f
-paintEmpty width height context = toPaint $
-    (\w h (back, point) -> case back of
-        Nothing -> Draw.none
-        Just back -> Draw.fill back point w h)
-    <$> width <*> height <*> context
-
--- | Translates a block produced by the given paint function.
-paintTrans :: (Applicative f) => f Offset
-    -> (f (Maybe Color, Point) -> Paint f)
-    -> f (Maybe Color, Point) -> Paint f
-paintTrans offset source context = source $
-    (\(ox, oy) (back, (x, y)) -> (back, (x + ox, y + oy)))
-    <$> offset <*> context
-
-instance (Applicative f) => Markup.Block Terminal (Block f) where
-    clear = Block {
-        freeWidth = 1,
-        freeHeight = 1,
-        opacity = Translucent,
-        place = \w h -> (pure 0, pure 0, paintEmpty w h) }
+instance (Applicative f) => Markup.Block Width Height (Block f) where
     (|||) left right =
         let rFreeWidth = freeWidth left + freeWidth right
         in Block {
@@ -125,19 +90,6 @@ instance (Applicative f) => Markup.Block Terminal (Block f) where
                     bh = (+) <$> beh <*> bmh
                 in (mw, mh, \c -> tPaint c `mix`
                     paintTrans ((\y -> (0, y)) <$> th) bPaint c) }
-    over high _ | opacity high == Opaque = high
-    over high low | opacity high == Transparent =
-        Markup.over (Markup.setBack (fst defaultAppearance) high) low
-    over high low = Block {
-        freeWidth = min (freeWidth high) (freeWidth low),
-        freeHeight = min (freeHeight high) (freeHeight low),
-        opacity = opacity low,
-        place = \w h ->
-            let (hmw, hmh, hPaint) = place high w h
-                (lmw, lmh, lPaint) = place low w h
-                mw = max <$> hmw <*> lmw
-                mh = max <$> hmh <*> lmh
-            in (mw, mh, \c -> hPaint c `over` lPaint c) }
     setWidth _ block | freeWidth block == 0 = block
     setWidth width block = block {
         freeWidth = 0,
@@ -152,23 +104,52 @@ instance (Applicative f) => Markup.Block Terminal (Block f) where
             let (mw, mh', paint) = place block w h
                 mh = max height <$> mh'
             in (mw, mh, paint) }
-    setBack nBack block = block {
-        opacity = Opaque,
-        place = \w h ->
-            let (mw, mh, paint) = place block w h
-                nPaint c =
-                    let nC = (\(_, offset) -> (Just nBack, offset)) <$> c
-                    in paint nC
-            in (mw, mh, nPaint) }
-
+instance (Applicative f) => Markup.BlockSolid
+    Width Height Color (Block f) where
+        solid color = Block {
+            freeWidth = 1,
+            freeHeight = 1,
+            opacity = Opaque (Just color),
+            place = \w h -> (pure 0, pure 0, paintSolid (pure color) w h) }
+instance (Applicative f) => Markup.BlockTrans Width Height (Block f) where
+    clear = Block {
+        freeWidth = 1,
+        freeHeight = 1,
+        opacity = Translucent True,
+        place = \w h -> (pure 0, pure 0, paintEmpty w h) }
+    over high low = res where
+        setBack nBack nOpacity = high {
+            opacity = nOpacity,
+            place = \w h ->
+                let (mw, mh, paint) = place high w h
+                    nPaint c =
+                        let nC = (\(_, offset) -> (Just nBack, offset)) <$> c
+                        in paint nC
+                in (mw, mh, nPaint) }
+        res = case (opacity high, opacity low) of
+            (Opaque _, _) -> high
+            (_, Translucent True) -> high
+            (Translucent True, _) -> low
+            (_, Opaque (Just col)) -> setBack col (Opaque Nothing)
+            (Dependent, _) -> setBack (fst defaultAppearance) (Opaque Nothing)
+            (_, lowOpacity) -> Block {
+                freeWidth = min (freeWidth high) (freeWidth low),
+                freeHeight = min (freeHeight high) (freeHeight low),
+                opacity = lowOpacity,
+                place = \w h ->
+                    let (hmw, hmh, hPaint) = place high w h
+                        (lmw, lmh, lPaint) = place low w h
+                        mw = max <$> hmw <*> lmw
+                        mh = max <$> hmh <*> lmh
+                    in (mw, mh, \c -> hPaint c `over` lPaint c) }
 instance (Applicative f) => Markup.FlowToBlock
-    Terminal (Flow f) (Block f) where
+    Width Height (Flow f) (Block f) where
         blockify alignment' flow =
             let alignment = Flow.fromAlignment alignment'
             in Block {
                 freeWidth = 1,
                 freeHeight = 1,
-                opacity = Transparent,
+                opacity = Dependent,
                 place = \w h ->
                     let (mh, paintFlow) = Flow.place flow alignment w
                         mw = Flow.minWidth flow
@@ -178,3 +159,45 @@ instance (Applicative f) => Markup.FlowToBlock
                             paintTrans ((\y -> (0, y)) <$> mh)
                                 (paintEmpty w eh) c
                     in (mw, mh, nPaint) }
+
+-- | Multiples an integer by a rational.
+imult :: (Integral a) => Rational -> a -> a
+imult x y = (y * fromInteger (numerator x)) `div` fromInteger (denominator x)
+
+-- | Combines the opacities for non-overlapping blocks.
+comps :: Opacity -> Opacity -> Opacity
+comps Dependent _ = Dependent
+comps _ Dependent = Dependent
+comps (Translucent True) (Translucent True) = Translucent True
+comps (Translucent _) _ = Translucent False
+comps _ (Translucent _) = Translucent False
+comps (Opaque (Just x)) (Opaque (Just y)) | x == y = Opaque (Just x)
+comps (Opaque _) (Opaque _) = Opaque Nothing
+
+-- | Constructs a paint function which paints a translucent block of the given
+-- width and height.
+paintEmpty :: (Applicative f)
+    => f Width -> f Height
+    -> f (Maybe Color, Point) -> Paint f
+paintEmpty width height context = toPaint $
+    (\w h (back, point) -> case back of
+        Nothing -> Draw.none
+        Just back -> Draw.fill back point w h)
+    <$> width <*> height <*> context
+
+-- | Constructs a paint function which paints a solid block of the given
+-- width, height and color/
+paintSolid :: (Applicative f)
+    => f Color -> f Width -> f Height
+    -> f (Maybe Color, Point) -> Paint f
+paintSolid color width height context = toPaint $
+    (\color w h (_, point) -> Draw.fill color point w h)
+    <$> color <*> width <*> height <*> context
+
+-- | Translates a block produced by the given paint function.
+paintTrans :: (Applicative f) => f Offset
+    -> (f (Maybe Color, Point) -> Paint f)
+    -> f (Maybe Color, Point) -> Paint f
+paintTrans offset source context = source $
+    (\(ox, oy) (back, (x, y)) -> (back, (x + ox, y + oy)))
+    <$> offset <*> context

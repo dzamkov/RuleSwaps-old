@@ -11,8 +11,8 @@ module Terminal.Widget (
 import Reactive
 import qualified Reactive.IO as IO
 import qualified Markup
-import Terminal.Context (Terminal)
-import Terminal.Flow (Flow)
+import Terminal.Metrics
+import Terminal.Flow (Flow, TextStyle)
 import Terminal.Block (Block)
 import Terminal.Paint (runPaint)
 import qualified Terminal.Block as Block
@@ -63,7 +63,7 @@ data Widget e f q a = forall k. (Ord k)
 
 -- | Constructs a non-interactive widget with the given value and figure.
 toWidget :: (Event e) => a -> d f -> Widget e f d a
-toWidget value figure = Widget $ const $ Info {
+toWidget value figure = Widget $ const Info {
     initialKeys = [] :: [((), [Key])],
     keyAssign = never,
     figure = figure,
@@ -102,22 +102,29 @@ instance (Reactive e f, Monoid a) => Monoid (Widget e f Flow a) where
     mempty = toWidget mempty mempty
     mappend = compose mappend
 instance (Reactive e f, Monoid a)
-    => Markup.Flow Terminal (Widget e f Flow a) where
+    => Markup.Flow Width (Widget e f Flow a) where
         weakSpace = toWidget mempty . Markup.weakSpace
         strongSpace = toWidget mempty . Markup.strongSpace
-        tightText font fore str = toWidget mempty $
-            Markup.tightText font fore str
+        tight = decorate Markup.tight
 instance (Reactive e f, Monoid a)
-    => Markup.Block Terminal (Widget e f Block a) where
-        clear = toWidget mempty Markup.clear
+    => Markup.FlowText Width TextStyle (Widget e f Flow a) where
+        tightText style str = toWidget mempty $ Markup.tightText style str
+        naturalSpace style = toWidget mempty $ Markup.naturalSpace style
+instance (Reactive e f, Monoid a)
+    => Markup.Block Width Height (Widget e f Block a) where
         (|||) = compose (Markup.|||)
         (===) = compose (Markup.===)
-        over = compose Markup.over
         setWidth width = decorate (Markup.setWidth width)
         setHeight height = decorate (Markup.setHeight height)
-        setBack nBack = decorate (Markup.setBack nBack)
-instance (Reactive e f, Monoid a) => Markup.FlowToBlock Terminal
-    (Widget e f Flow a) (Widget e f Block a) where
+instance (Reactive e f, Monoid a)
+    => Markup.BlockSolid Width Height Color (Widget e f Block a) where
+        solid = toWidget mempty . Markup.solid
+instance (Reactive e f, Monoid a)
+    => Markup.BlockTrans Width Height (Widget e f Block a) where
+        clear = toWidget mempty Markup.clear
+        over = compose Markup.over
+instance (Reactive e f, Monoid a) => Markup.FlowToBlock
+    Width Height (Widget e f Flow a) (Widget e f Block a) where
         blockify alignment = decorate (Markup.blockify alignment)
 
 -- | Describes the injective mapping between identifiers and keys.
@@ -136,7 +143,7 @@ updateKeyMap (id, keys) curMap@(KeyMap f b) =
                 Nothing -> KeyMap (Map.insert id key f) (Map.insert key id b)
         assign curMap [] = curMap
     in case Map.lookup id f of
-        Just curKey | elem curKey keys -> curMap
+        Just curKey | curKey `elem` keys -> curMap
         Just curKey ->
             let nMap = KeyMap (Map.delete id f) (Map.delete curKey b)
             in assign nMap keys

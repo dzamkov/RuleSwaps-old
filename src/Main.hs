@@ -7,7 +7,7 @@ import Deck
 import Reactive
 import qualified Reactive.IO
 import Markup hiding (Flow, Block)
-import Terminal.Context
+import Terminal.Metrics
 import Terminal.Flow (Flow)
 import Terminal.Block (Block, place)
 import qualified Terminal.Block as Block
@@ -21,7 +21,7 @@ import Control.Monad.Identity
 import Control.Applicative
 
 testFlow :: (Reactive e f) => Widget e f Flow ()
-testFlow = text Font (Color ANSI.Vivid ANSI.Green) $
+testFlow = text (color $ Color ANSI.Vivid ANSI.Green) $
     take 450 $ cycle "a ab abc "
 
 testBlock :: (Reactive e f) => Widget e f Block ()
@@ -29,11 +29,10 @@ testBlock = res where
     green = Color ANSI.Vivid ANSI.Green
     red = Color ANSI.Vivid ANSI.Red
     blue = Color ANSI.Vivid ANSI.Blue
-    square c = setBack c clear
     res = setBack (Color ANSI.Dull ANSI.Red) $ setWidth 29 (
-        square red |||
+        solid red |||
         setHeight 6 (blockify Center testFlow) |||
-        square blue)
+        solid blue)
 
 main = runWidget testBlock
 
