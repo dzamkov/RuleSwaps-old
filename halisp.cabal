@@ -23,7 +23,6 @@ executable rule-swaps
                   entropy,
                   text,
                   ansi-terminal,
-                  terminal-size,
-                  reactive-banana
+                  terminal-size
   if os(windows)
     extra-libraries:  msvcrt

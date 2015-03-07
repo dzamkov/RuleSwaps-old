@@ -5,20 +5,21 @@ module Terminal.Paint (
     fromPaint,
     mix,
     over,
-    updates,
+    signals,
     runPaint
 ) where
 
+import Reactive
+import qualified Reactive.IO as IO
 import Terminal.Context
 import Terminal.Draw
 import qualified System.Console.Terminal.Size as Size
 import Data.IORef
-import Reactive.Banana
-import Reactive.Banana.Frameworks
 import Data.Monoid
-import Control.Monad (replicateM_)
+import Control.Monad (when, replicateM_)
+import Control.Applicative
 
--- | Given that @f@ is a signal constructor, this represents a
+-- | Given that @f@ is a behavior constructor, this represents a
 -- time-varying picture, similar to @f Draw@. Unlike @f Draw@, 'Paint'
 -- allows efficient partial updates.
 data Paint f
@@ -38,53 +39,58 @@ mix = Mix
 over :: Paint f -> Paint f -> Paint f
 over = Over
 
--- | Converts a paint into a draw signal, discarding the information needed
+-- | Converts a paint into a draw behavior, discarding the information needed
 -- to perform partial updates.
 fromPaint :: (Applicative f) => Paint f -> f Draw
 fromPaint (ToPaint signal) = signal
 fromPaint (Mix x y) = (<>) <$> fromPaint x <*> fromPaint y
 fromPaint (Over x y) = (<>) <$> fromPaint y <*> fromPaint x
 
--- | Gets an event source for a paint providing partial updates for the
--- underlying draw 'Behavior'. Use 'fromPaint' to get the initial 'Draw' to
--- which updates can be applied to.
-updates :: Frameworks t => Paint (Behavior t)
-    -> Moment t (Event t (Future Draw))
-updates (ToPaint signal) = changes signal
-updates (Mix x y) = union <$> updates x <*> updates y
-updates (Over hi lo) = do
-    hiUpdates <- updates hi
-    loUpdates <- updates lo
-    let nLoUpdates = (\hi fLo -> (<> hi) <$> fLo) <$>
-          fromPaint hi <@> loUpdates
-    return $ union hiUpdates nLoUpdates
+-- | Gets a 'Draw' behavior for a paint, along with an event which provides
+-- partial updates. Accumulating the partial update event should yield the
+-- draw behavior.
+signals :: (ReactiveDiscrete e f) => Paint f -> (f Draw, e Draw)
+signals (ToPaint source) = (source, changes source)
+signals (Mix x y) = (rB, rC) where
+    (xB, xC) = signals x
+    (yB, yC) = signals y
+    rB = (<>) <$> xB <*> yB
+    rC = xC `union` yC
+signals (Over hi lo) = (rB, rC) where
+    (hiB, hiC) = signals hi
+    (loB, loC) = signals lo
+    rB = (<>) <$> loB <*> hiB
+    rC = hiC `union` (flip (<>) <$> hiB <@> loC)
 
--- | Performs the necessary 'Moment' operations such that, while actuated, the
--- network will keep the current terminal updated with the given paint.
--- Returns a behavior that provides the size of the terminal.
-runPaint :: Frameworks t => Paint (Behavior t)
-    -> Moment t (Behavior t (Width, Height))
-runPaint paint = do
-    (sizeChanged, _) <- newEvent -- TODO: polling for changeSize
+-- | Displays a paint on the current terminal, keeping it updated as needed.
+-- The size of the terminal may be used to generate the paint.
+runPaint :: (IO.Behavior (Width, Height) -> Paint IO.Behavior) -> IO ()
+runPaint source = do
     let getSize = do
         Just win <- Size.size
         return (Width $ Size.width win, Height $ Size.height win)
-    curSize <- liftIO getSize
+    curSize <- getSize
+    (sizeChanged, changeSize) <- IO.newEvent
     let size = stepper curSize sizeChanged
-    curDraw <- initial $ fromPaint paint
-    stRef <- liftIO $ newIORef undefined
-    liftIOLater $ do
-        let Height height = snd curSize
-        replicateM_ height $ putStrLn ""
-        cursorUp height
-        setAppearance defaultAppearance
-        let st = (fst curSize, (0, 0), defaultAppearance)
-        nSt <- runDraw curDraw st
-        writeIORef stRef nSt
+    let paint = source size
+    let (paintB, paintC) = signals paint
+
+    let Height height = snd curSize
+    replicateM_ height $ putStrLn ""
+    cursorUp height
+    setAppearance defaultAppearance
+    let st = (fst curSize, (0, 0), defaultAppearance)
+    curDraw <- IO.value paintB
+    nSt <- runDraw curDraw st
+    stRef <- newIORef nSt
+
+    let checkSize = do
+        curSize <- IO.value size
+        nSize <- getSize
+        when (curSize /= nSize) $ changeSize nSize
     let update draw = do
         st <- readIORef stRef
         nSt <- runDraw draw st
         writeIORef stRef nSt
-    paintUpdates <- updates paint
-    reactimate' $ (update <$>) <$> paintUpdates
-    return size
+        checkSize
+    IO.registerEternal paintC update -- TODO: possible race condition

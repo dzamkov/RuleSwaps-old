@@ -4,6 +4,8 @@
 module Main where
 
 import Deck
+import Reactive
+import qualified Reactive.IO
 import Markup hiding (Flow, Block)
 import Terminal.Context
 import Terminal.Flow (Flow)
@@ -14,33 +16,26 @@ import Terminal.Paint
 import Terminal.Input
 import Terminal.Widget
 import qualified System.Console.ANSI as ANSI
-import Reactive.Banana hiding (Identity)
-import Reactive.Banana.Frameworks
 import Data.Monoid
 import Control.Monad.Identity
 import Control.Applicative
 
-testFlow :: Widget t Flow ()
+testFlow :: (Reactive e f) => Widget e f Flow ()
 testFlow = text Font (Color ANSI.Vivid ANSI.Green) $
-    take 20 $ cycle "a ab abc "
+    take 450 $ cycle "a ab abc "
 
-{- testBlock :: Widget t Block ()
+testBlock :: (Reactive e f) => Widget e f Block ()
 testBlock = res where
     green = Color ANSI.Vivid ANSI.Green
     red = Color ANSI.Vivid ANSI.Red
     blue = Color ANSI.Vivid ANSI.Blue
     square c = setBack c clear
-    res = setWidth 29 (
+    res = setBack (Color ANSI.Dull ANSI.Red) $ setWidth 29 (
         square red |||
         setHeight 6 (blockify Center testFlow) |||
-        square green) -}
+        square blue)
 
-testBlock :: Widget t Block ()
-testBlock = setBack (Color ANSI.Dull ANSI.Blue) (blockify Center testFlow)
-
-main = do
-    network <- compile $ runWidget testBlock
-    actuate network
+main = runWidget testBlock
 
 reset :: IO ()
 reset = do
