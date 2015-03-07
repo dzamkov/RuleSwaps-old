@@ -26,10 +26,13 @@ import Control.Applicative
 type Key = Char
 
 -- | The information needed to instantiate a widget.
-data Context e k = Context {
+data Context e f k = Context {
 
     -- | An event that occurs when an assigned key is pressed.
-    key :: e k }
+    keyPress :: e k,
+
+    -- | Provides the identifier to key mapping for assigned keys.
+    keyAssignments :: f (k -> Maybe Key) }
 
 -- | The information provided by a running widget.
 data Info e (f :: * -> *) k q a = Info {
@@ -56,7 +59,7 @@ data Info e (f :: * -> *) k q a = Info {
 -- of type @a@. Widget's live in a reactive system with events of type @e@
 -- and behaviors of type @f@.
 data Widget e f q a = forall k. (Ord k)
-    => Widget (Context e k -> Info e f k q a)
+    => Widget (Context e f k -> Info e f k q a)
 
 -- | Constructs a non-interactive widget with the given value and figure.
 toWidget :: (Event e) => a -> d f -> Widget e f d a
@@ -80,9 +83,13 @@ compose :: (Reactive e f, Monoid a)
     -> Widget e f q a -> Widget e f p a -> Widget e f r a
 compose composeFigures (Widget x) (Widget y) = Widget $ \context ->
     let xInfo = x Context {
-            key = filterJust $ either Just (const Nothing) <$> key context }
+            keyPress = filterJust $
+                either Just (const Nothing) <$> keyPress context,
+            keyAssignments = (. Left) <$> keyAssignments context }
         yInfo = y Context {
-            key = filterJust $ either (const Nothing) Just <$> key context }
+            keyPress = filterJust $
+                either (const Nothing) Just <$> keyPress context,
+            keyAssignments = (. Right) <$> keyAssignments context }
     in Info {
         initialKeys = fmap (first Left) (initialKeys xInfo) ++
             fmap (first Right) (initialKeys yInfo),
@@ -113,19 +120,47 @@ instance (Reactive e f, Monoid a) => Markup.FlowToBlock Terminal
     (Widget e f Flow a) (Widget e f Block a) where
         blockify alignment = decorate (Markup.blockify alignment)
 
--- | Updates key assignments given a key assignment request.
-updateKeys :: (Eq k) => (k, [Key]) -> Map Key k -> Map Key k
-updateKeys = undefined -- TODO
+-- | Describes the injective mapping between identifiers and keys.
+data KeyMap k = KeyMap (Map k Key) (Map Key k)
+
+-- | A 'KeyMap' with no key assignments.
+emptyKeyMap :: KeyMap k
+emptyKeyMap = KeyMap Map.empty Map.empty
+
+-- | Updates a 'KeyMap' in response to a key assignment request.
+updateKeyMap :: (Ord k) => (k, [Key]) -> KeyMap k -> KeyMap k
+updateKeyMap (id, keys) curMap@(KeyMap f b) =
+    let assign curMap@(KeyMap f b) (key : keys) =
+            case Map.lookup key b of
+                Just _ -> assign curMap keys
+                Nothing -> KeyMap (Map.insert id key f) (Map.insert key id b)
+        assign curMap [] = curMap
+    in case Map.lookup id f of
+        Just curKey | elem curKey keys -> curMap
+        Just curKey ->
+            let nMap = KeyMap (Map.delete id f) (Map.delete curKey b)
+            in assign nMap keys
+        Nothing -> assign curMap keys
+
+-- | Gets the key for an identifier in a 'KeyMap'.
+lookupKeyMap :: (Ord k) => KeyMap k -> k -> Maybe Key
+lookupKeyMap (KeyMap f _) id = Map.lookup id f
+
+-- | Gets the identifier for a key in a 'KeyMap'
+reverseLookupKeyMap :: (Ord k) => KeyMap k -> Key -> Maybe k
+reverseLookupKeyMap (KeyMap _ b) key = Map.lookup key b
 
 -- | Runs a widget in the current terminal.
 runWidget :: Widget IO.Event IO.Behavior Block a -> IO a
 runWidget (Widget x) = mdo
     (gKey, _) <- IO.newEvent
     -- TODO: listen for keys
-    let iKeyMap = foldl (flip updateKeys) Map.empty $ initialKeys xInfo
-    let keyMap = accumB iKeyMap $ updateKeys <$> keyAssign xInfo
-    let aKey = filterJust $ flip Map.lookup <$> keyMap <@> gKey
-    let xInfo = x Context { key = aKey }
+    let iKeyMap = foldl (flip updateKeyMap) emptyKeyMap $ initialKeys xInfo
+    let keyMap = accumB iKeyMap $ updateKeyMap <$> keyAssign xInfo
+    let aKey = filterJust $ reverseLookupKeyMap <$> keyMap <@> gKey
+    let xInfo = x Context {
+        keyPress = aKey,
+        keyAssignments = lookupKeyMap <$> keyMap }
     runPaint $ \size ->
         let width = fst <$> size
             height = snd <$> size
