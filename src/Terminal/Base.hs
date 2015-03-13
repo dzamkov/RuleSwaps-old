@@ -1,5 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Terminal.Metrics where
+module Terminal.Base where
 
 import qualified System.Console.ANSI as ANSI
 import Data.Monoid

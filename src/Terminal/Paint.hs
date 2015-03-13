@@ -11,7 +11,7 @@ module Terminal.Paint (
 
 import Reactive
 import qualified Reactive.IO as IO
-import Terminal.Metrics
+import Terminal.Base
 import Terminal.Draw
 import qualified System.Console.Terminal.Size as Size
 import Data.IORef

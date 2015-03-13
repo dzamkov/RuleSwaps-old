@@ -1,6 +1,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 module Markup where
 
+import Reactive
 import Data.Monoid
 
 -- | @a@ is a flow-like figure, a linear arrangment of items interspersed with
@@ -118,3 +119,17 @@ class (Flow w a, Block w h b) => FlowToBlock w h a b | a -> b where
 
     -- | Converts a flow into a translucent block using the given alignment.
     blockify :: Alignment -> a -> b
+
+-- | @w a@ is a description of a interactive figure whose running instances
+-- produce a value of type @a@.
+class Functor w => Widget w where
+
+    -- | Computes the fixed point of a widget.
+    wfix :: (a -> w a) -> w a
+
+-- | @w@ is a widget type that allows the construction of buttons.
+class (Event e, Widget w, Monoid p) => WidgetButton e p w where
+
+    -- | Constructs a button widget with the given attributes. The resulting
+    -- event will occur whenever the button is pressed.
+    button :: p -> w (e ())

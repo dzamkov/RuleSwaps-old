@@ -24,7 +24,7 @@ module Terminal.Draw (
     runDrawInline
 ) where
 
-import Terminal.Metrics
+import Terminal.Base
 import System.Console.ANSI hiding (Color)
 import System.IO (hFlush, stdout)
 import Data.Maybe (catMaybes, mapMaybe)

@@ -7,7 +7,7 @@ module Terminal.Block (
 
 import qualified Markup
 import qualified Terminal.Draw as Draw
-import Terminal.Metrics
+import Terminal.Base
 import Terminal.Paint
 import Terminal.Flow (Flow)
 import qualified Terminal.Flow as Flow

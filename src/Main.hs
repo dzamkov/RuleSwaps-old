@@ -7,7 +7,8 @@ import Deck
 import Reactive
 import qualified Reactive.IO
 import Markup hiding (Flow, Block)
-import Terminal.Metrics
+import Markup.Builder
+import Terminal.Base
 import Terminal.Flow (Flow)
 import Terminal.Block (Block, place)
 import qualified Terminal.Block as Block

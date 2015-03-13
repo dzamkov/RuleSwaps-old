@@ -11,7 +11,7 @@ module Terminal.Widget (
 import Reactive
 import qualified Reactive.IO as IO
 import qualified Markup
-import Terminal.Metrics
+import Terminal.Base
 import Terminal.Flow (Flow, TextStyle)
 import Terminal.Block (Block)
 import Terminal.Paint (runPaint)
