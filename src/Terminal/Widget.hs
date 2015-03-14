@@ -1,8 +1,8 @@
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Terminal.Widget (
     Widget,
     runWidget
@@ -16,88 +16,43 @@ import Terminal.Flow (Flow, TextStyle)
 import Terminal.Block (Block)
 import Terminal.Paint (runPaint)
 import qualified Terminal.Block as Block
-import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Monoid
-import Control.Arrow (first)
+import Control.Monad.State
+import Control.Arrow (first, second)
 import Control.Applicative
 
 -- | Identifies a key that can be assigned to an action.
 type Key = Char
 
--- | The information needed to instantiate a widget.
-data Context e f k = Context {
+-- | @m@ is a monadic procedure that sets or changes a reactive network
+-- (with events of type @e@ and behaviors of type @f@) from the perspective
+-- of a widget.
+class (Reactive e f, Applicative m, MonadFix m) => MonadWidget e f m where
 
-    -- | An event that occurs when an assigned key is pressed.
-    keyPress :: e k,
+    -- | Tries capturing the given key. If successful, the event for when the
+    -- is pressed is returned, along with a procedure that can be used to
+    -- later release the key.
+    requestKey :: Key -> m (Maybe (e (), m ()))
 
-    -- | Provides the identifier to key mapping for assigned keys.
-    keyAssignments :: f (k -> Maybe Key) }
-
--- | The information provided by a running widget.
-data Info e (f :: * -> *) k q a = Info {
-
-    -- | The initial requested keys for the widget. Each identifier is
-    -- associated with a list of keys that may be assigned to it, in order
-    -- of preference.
-    initialKeys :: [(k, [Key])],
-
-    -- | An event that occurs when a key request for the widget changes. Each
-    -- event consists of an identifier an a list of keys that may be assigned
-    -- to it, in order of preference. This may cause an existing identifier to
-    -- be reassigned or cleared (if the key list is empty).
-    keyAssign :: e (k, [Key]),
-
-    -- | The figure for the widget.
-    figure :: q f,
-
-    -- | The value of the widget.
-    value :: a }
+    -- | Allows a procedure to be executed at a later time. Whenever the given
+    -- event occurs, the associated procedure will be run and its result will
+    -- be accessible from the returned event.
+    defer :: e (m a) -> m (e a)
 
 -- | Extends a figure of type @q@ with user interaction capabilities, such as
 -- selection and key input. An active instance of the widget produces a value
 -- of type @a@. Widget's live in a reactive system with events of type @e@
 -- and behaviors of type @f@.
-data Widget e f q a = forall k. (Ord k)
-    => Widget (Context e f k -> Info e f k q a)
-
--- | Constructs a non-interactive widget with the given value and figure.
-toWidget :: (Event e) => a -> d f -> Widget e f d a
-toWidget value figure = Widget $ const Info {
-    initialKeys = [] :: [((), [Key])],
-    keyAssign = never,
-    figure = figure,
-    value = value }
-
--- | Decorates a widget using the given function to decorate the underlying
--- figure.
-decorate :: (q f -> p f) -> Widget e f q a -> Widget e f p a
-decorate decorateFigure (Widget x) = Widget $ \context ->
-    let xInfo = x context
-    in xInfo { figure = decorateFigure $ figure xInfo }
-
--- | Composes two widgets using the given function to compose the underlying
--- figures.
-compose :: (Reactive e f, Monoid a)
-    => (q f -> p f -> r f)
-    -> Widget e f q a -> Widget e f p a -> Widget e f r a
-compose composeFigures (Widget x) (Widget y) = Widget $ \context ->
-    let xInfo = x Context {
-            keyPress = filterJust $
-                either Just (const Nothing) <$> keyPress context,
-            keyAssignments = (. Left) <$> keyAssignments context }
-        yInfo = y Context {
-            keyPress = filterJust $
-                either (const Nothing) Just <$> keyPress context,
-            keyAssignments = (. Right) <$> keyAssignments context }
-    in Info {
-        initialKeys = fmap (first Left) (initialKeys xInfo) ++
-            fmap (first Right) (initialKeys yInfo),
-        keyAssign = fmap (first Left) (keyAssign xInfo) `union`
-            fmap (first Right) (keyAssign yInfo),
-        figure = composeFigures (figure xInfo) (figure yInfo),
-        value = value xInfo <> value yInfo }
-
+data Widget e f q a = Widget (forall m. (MonadWidget e f m) => m (q f, a))
+instance Functor (Widget e f q) where
+    fmap f (Widget x) = Widget (fmap (second f) x)
+instance (Reactive e f) => Markup.Widget (Widget e f q) where
+    wfix f = Widget $ mdo
+        let Widget x = f value
+        (fig, value) <- x
+        return (fig, value)
 instance (Reactive e f, Monoid a) => Monoid (Widget e f Flow a) where
     mempty = toWidget mempty mempty
     mappend = compose mappend
@@ -127,50 +82,61 @@ instance (Reactive e f, Monoid a) => Markup.FlowToBlock
     Width Height (Widget e f Flow a) (Widget e f Block a) where
         blockify alignment = decorate (Markup.blockify alignment)
 
--- | Describes the injective mapping between identifiers and keys.
-data KeyMap k = KeyMap (Map k Key) (Map Key k)
+-- | Constructs a non-interactive widget with the given value and figure.
+toWidget :: (Event e) => a -> d f -> Widget e f d a
+toWidget value figure = Widget $ return (figure, value)
 
--- | A 'KeyMap' with no key assignments.
-emptyKeyMap :: KeyMap k
-emptyKeyMap = KeyMap Map.empty Map.empty
+-- | Decorates a widget using the given function to decorate the underlying
+-- figure.
+decorate :: (q f -> p f) -> Widget e f q a -> Widget e f p a
+decorate f (Widget source) = Widget $ first f <$> source
 
--- | Updates a 'KeyMap' in response to a key assignment request.
-updateKeyMap :: (Ord k) => (k, [Key]) -> KeyMap k -> KeyMap k
-updateKeyMap (id, keys) curMap@(KeyMap f b) =
-    let assign curMap@(KeyMap f b) (key : keys) =
-            case Map.lookup key b of
-                Just _ -> assign curMap keys
-                Nothing -> KeyMap (Map.insert id key f) (Map.insert key id b)
-        assign curMap [] = curMap
-    in case Map.lookup id f of
-        Just curKey | curKey `elem` keys -> curMap
-        Just curKey ->
-            let nMap = KeyMap (Map.delete id f) (Map.delete curKey b)
-            in assign nMap keys
-        Nothing -> assign curMap keys
+-- | Composes two widgets using the given function to compose the underlying
+-- figures.
+compose :: (Reactive e f, Monoid a)
+    => (q f -> p f -> r f)
+    -> Widget e f q a -> Widget e f p a -> Widget e f r a
+compose f (Widget x) (Widget y) = Widget $
+    (\(xFig, xV) (yFig, yV) -> (f xFig yFig, xV <> yV)) <$> x <*> y
 
--- | Gets the key for an identifier in a 'KeyMap'.
-lookupKeyMap :: (Ord k) => KeyMap k -> k -> Maybe Key
-lookupKeyMap (KeyMap f _) id = Map.lookup id f
+-- | Contains information about a running widget from a terminal perspective.
+data GlobalState = GlobalState {
 
--- | Gets the identifier for a key in a 'KeyMap'
-reverseLookupKeyMap :: (Ord k) => KeyMap k -> Key -> Maybe k
-reverseLookupKeyMap (KeyMap _ b) key = Map.lookup key b
+    -- | An event that is fired when an assignable key is pressed.
+    key :: IO.Event Key,
+
+    -- | The set of keys that are currently assigned.
+    assignedKeys :: Set Key }
+
+-- | Implementation of 'MonadWidget' from a terminal perspective.
+newtype Global a = Global (StateT GlobalState IO a)
+    deriving (Functor, Applicative, Monad, MonadFix)
+instance MonadWidget IO.Event IO.Behavior Global where
+    requestKey rKey = Global $ do
+        state <- get
+        let curKeys = assignedKeys state
+        if Set.member rKey curKeys
+            then return Nothing
+            else do
+                put state { assignedKeys = Set.insert rKey curKeys }
+                let event = filterJust $ (\eKey -> if eKey == rKey
+                        then Just () else Nothing) <$> key state
+                    release = Global $ modify (\state -> state {
+                        assignedKeys = Set.delete rKey $ assignedKeys state })
+                return $ Just (event, release)
+    defer = undefined -- TODO
 
 -- | Runs a widget in the current terminal.
 runWidget :: Widget IO.Event IO.Behavior Block a -> IO a
-runWidget (Widget x) = mdo
-    (gKey, _) <- IO.newEvent
-    -- TODO: listen for keys
-    let iKeyMap = foldl (flip updateKeyMap) emptyKeyMap $ initialKeys xInfo
-    let keyMap = accumB iKeyMap $ updateKeyMap <$> keyAssign xInfo
-    let aKey = filterJust $ reverseLookupKeyMap <$> keyMap <@> gKey
-    let xInfo = x Context {
-        keyPress = aKey,
-        keyAssignments = lookupKeyMap <$> keyMap }
+runWidget (Widget (Global setup)) = mdo
+    (key, _) <- IO.newEvent
+    let state = GlobalState {
+            key = key,
+            assignedKeys = Set.empty }
+    (fig, value) <- evalStateT setup state
     runPaint $ \size ->
         let width = fst <$> size
             height = snd <$> size
-            (_, _, paint) = Block.place (figure xInfo) width height
+            (_, _, paint) = Block.place fig width height
         in paint $ pure (Nothing, (0, 0))
-    return $ value xInfo
+    return value

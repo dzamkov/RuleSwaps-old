@@ -6,7 +6,7 @@ module Main where
 import Deck
 import Reactive
 import qualified Reactive.IO
-import Markup hiding (Flow, Block)
+import Markup hiding (Flow, Block, Widget)
 import Markup.Builder
 import Terminal.Base
 import Terminal.Flow (Flow)
