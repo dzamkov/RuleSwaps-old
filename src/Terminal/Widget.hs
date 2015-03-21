@@ -1,16 +1,19 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Terminal.Widget (
     Widget,
+    ButtonStyle (..),
     runWidget
 ) where
 
 import Reactive
 import qualified Reactive.IO as IO
 import qualified Markup
+import Markup.Attr hiding (key)
 import Terminal.Base
 import Terminal.Flow (Flow, TextStyle)
 import Terminal.Block (Block)
@@ -29,7 +32,8 @@ type Key = Char
 -- | @m@ is a monadic procedure that sets or changes a reactive network
 -- (with events of type @e@ and behaviors of type @f@) from the perspective
 -- of a widget.
-class (Reactive e f, Applicative m, MonadFix m) => MonadWidget e f m where
+class (Reactive e f, Applicative m, MonadFix m)
+    => MonadWidget e f m | m -> e f where
 
     -- | Tries capturing the given key. If successful, the event for when the
     -- is pressed is returned, along with a procedure that can be used to
@@ -40,6 +44,16 @@ class (Reactive e f, Applicative m, MonadFix m) => MonadWidget e f m where
     -- event occurs, the associated procedure will be run and its result will
     -- be accessible from the returned event.
     defer :: e (m a) -> m (e a)
+
+-- | Tries capturing one of the given keys, ordered by preference. See
+-- 'requestKey'.
+requestKeyFrom :: (MonadWidget e f m) => [Key] -> m (Maybe (Key, e (), m ()))
+requestKeyFrom [] = return Nothing
+requestKeyFrom (h : t) = do
+    r <- requestKey h
+    case r of
+        Just (event, release) -> return $ Just (h, event, release)
+        Nothing -> requestKeyFrom t
 
 -- | Extends a figure of type @q@ with user interaction capabilities, such as
 -- selection and key input. An active instance of the widget produces a value
@@ -99,6 +113,45 @@ compose :: (Reactive e f, Monoid a)
 compose f (Widget x) (Widget y) = Widget $
     (\(xFig, xV) (yFig, yV) -> (f xFig yFig, xV <> yV)) <$> x <*> y
 
+-- | A possible style for a flow-based button.
+data ButtonStyle = ButtonStyle {
+    buttonKeys :: [Key],
+    buttonColor :: Color,
+    buttonTitle :: Maybe String }
+instance AttrKey ButtonStyle where
+    keys k style = style { buttonKeys = k }
+instance AttrColor Color ButtonStyle where
+    color c style = style { buttonColor = c }
+instance AttrTitle ButtonStyle where
+    title t style = style { buttonTitle = Just t }
+instance HasDefault ButtonStyle where
+    defaultStyle = ButtonStyle {
+        buttonKeys = [],
+        buttonColor = snd defaultAppearance,
+        buttonTitle = Nothing }
+instance Reactive e f
+    => Markup.WidgetButton e ButtonStyle (Widget e f Flow) where
+        button mod = res where
+            style = mod defaultStyle
+            indicator key = Markup.tightText
+                (color $ buttonColor style)
+                ['[', key, ']']
+            title = Markup.tightText
+                (color $ buttonColor style)
+                <$> buttonTitle style
+            res = Widget $ do
+                r <- requestKeyFrom $ buttonKeys style
+                let (ind, event) = case r of
+                        Just (key, event, _) -> (Just $ indicator key, event)
+                        Nothing -> (Nothing, never)
+                let fig = case (ind, title) of
+                        (Nothing, Nothing) -> mempty
+                        (Just ind, Nothing) -> ind
+                        (Nothing, Just title) -> title
+                        (Just ind, Just title) ->
+                            ind <> Markup.space 1 <> title
+                return (fig, event)
+
 -- | Contains information about a running widget from a terminal perspective.
 data GlobalState = GlobalState {
 
@@ -128,7 +181,7 @@ instance MonadWidget IO.Event IO.Behavior Global where
 
 -- | Runs a widget in the current terminal.
 runWidget :: Widget IO.Event IO.Behavior Block a -> IO a
-runWidget (Widget (Global setup)) = mdo
+runWidget (Widget (Global setup)) = do
     (key, _) <- IO.newEvent
     let state = GlobalState {
             key = key,

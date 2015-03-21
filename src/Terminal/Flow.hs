@@ -15,6 +15,7 @@ module Terminal.Flow (
 
 import Prelude hiding (break)
 import qualified Markup
+import Markup.Attr
 import Terminal.Base
 import Terminal.Paint
 import qualified Terminal.Draw as Draw
@@ -31,18 +32,11 @@ type Space = Width
 type Word f = f (Color, Point) -> Paint f
 
 -- | A possible style for text in a flow.
-data TextStyle = TextStyle (Maybe Color)
-instance Monoid TextStyle where
-    mempty = TextStyle Nothing
-    mappend _ style@(TextStyle (Just _)) = style
-    mappend style (TextStyle Nothing) = style
-instance Markup.AttrColor Color TextStyle where
-    color = TextStyle . Just
-
--- | Gets the final color for a text style.
-textStyleColor :: TextStyle -> Color
-textStyleColor (TextStyle Nothing) = snd defaultAppearance
-textStyleColor (TextStyle (Just color)) = color
+data TextStyle = TextStyle { textColor :: Color }
+instance AttrColor Color TextStyle where
+    color c style = style { textColor = c }
+instance HasDefault TextStyle where
+    defaultStyle = TextStyle { textColor = snd defaultAppearance }
 
 -- | A figure, based in the terminal, which is linear and can be broken up at
 -- certain points, much like text.
@@ -61,7 +55,7 @@ instance Applicative f => Markup.Flow Width (Flow f) where
     tight = error "'tight' not implemented" -- TODO
 instance Applicative f => Markup.FlowText Width TextStyle (Flow f) where
     tightText style str = res where
-        fore = textStyleColor style
+        fore = textColor (style defaultStyle)
         width = Width $ length str
         paint (back, offset) = Draw.string (back, fore) offset str
         res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]

@@ -27,35 +27,21 @@ class (Monoid w, Monoid a) => Flow w a | a -> w where
 space :: (Flow w a) => w -> a
 space = weakSpace
 
--- | @p@ is a styling description that allows a color of type @c@ to be
--- specified.
-class Monoid p => AttrColor c p | p -> c where
-
-    -- | Constructs a styling description with the given color.
-    color :: c -> p
-
--- | @p@ is a styling description for text that allows a font of type @f@
--- to be specified.
-class Monoid p => AttrFont f p | p -> f where
-
-    -- | Constructs a styling description with the given font.
-    font :: f -> p
-
 -- | @a@ is a flow-like figure with a means of displaying text. The text
 -- can be styled using a description of type @p@.
-class (Flow w a, Monoid p) => FlowText w p a | a -> p where
+class Flow w a => FlowText w p a | a -> p where
 
     -- | Constructs a figure displaying the given text with no internal
     -- breakpoints.
-    tightText :: p -> String -> a
+    tightText :: (p -> p) -> String -> a
 
     -- | A flow item corresponding to a space between words in text with
     -- the given styling description.
-    naturalSpace :: p -> a
+    naturalSpace :: (p -> p) -> a
 
 -- | Constructs a figure displaying the given text with natural breakpoints
 -- between each word.
-text :: (FlowText w p a) => p -> String -> a
+text :: (FlowText w p a) => (p -> p) -> String -> a
 text style = breakSpace where
     breakWord a [] = tightText style (reverse a)
     breakWord a (' ' : xs) = tightText style (reverse a) <> breakSpace xs
@@ -128,8 +114,8 @@ class Functor w => Widget w where
     wfix :: (a -> w a) -> w a
 
 -- | @w@ is a widget type that allows the construction of buttons.
-class (Event e, Widget w, Monoid p) => WidgetButton e p w where
+class (Event e, Widget w) => WidgetButton e p w | w -> e p where
 
-    -- | Constructs a button widget with the given attributes. The resulting
+    -- | Constructs a button widget with the given style. The resulting
     -- event will occur whenever the button is pressed.
-    button :: p -> w (e ())
+    button :: (p -> p) -> w (e ())
