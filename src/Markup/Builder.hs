@@ -67,11 +67,12 @@ getSize f =
 
 -- | Brings an instance of a widget into a builder.
 use :: (Widget w) => w a -> Builder u (w u, a)
-use widget = Builder 1 (\raise offset plex -> case getBin plex offset of
-    Just (Value value) ->
-        (fmap (raise . setBin offset . Value) widget, unsafeCoerce value)
-    Nothing -> error $ "'use'd widget not present in final widget, " ++
-        "no value available")
+use widget = Builder 1 (\raise offset plex ->
+    (fmap (raise . setBin offset . Value) widget,
+    case getBin plex offset of
+        Just (Value value) -> unsafeCoerce value
+        Nothing -> error $ "'use'd widget not present in final widget, " ++
+            "no value available"))
 
 -- | Runs a builder to produce a widget.
 runBuilder :: (Widget w) => (forall u. (Monoid u) => Builder u (w u, a)) -> w a
