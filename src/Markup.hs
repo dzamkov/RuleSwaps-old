@@ -101,7 +101,7 @@ data Alignment
 
 -- | @a@ is a 'Flow' figure that can be converted into a 'Block' figure of
 -- type @b@.
-class (Flow w a, Block w h b) => FlowToBlock w h a b | a -> b where
+class (Flow w a, Block w h b) => FlowToBlock w h a b | a -> b, b -> a where
 
     -- | Converts a flow into a translucent block using the given alignment.
     blockify :: Alignment -> a -> b

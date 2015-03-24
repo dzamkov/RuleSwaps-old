@@ -12,6 +12,8 @@ import Terminal.Paint
 import Terminal.Flow (Flow)
 import qualified Terminal.Flow as Flow
 import Data.Ratio
+import Data.Maybe (fromMaybe)
+import Control.Arrow (first)
 import Control.Applicative
 
 -- | Specifies the opacity and high-level kind of a block.
@@ -151,11 +153,13 @@ instance (Applicative f) => Markup.FlowToBlock
                 freeHeight = 1,
                 opacity = Dependent,
                 place = \w h ->
-                    let (mh, paintFlow) = Flow.place flow alignment w
+                    let getBack = fromMaybe $
+                            error "back color must be provided"
+                        (mh, paintFlow) = Flow.place flow alignment w
                         mw = Flow.minWidth flow
                         eh = (-) <$> h <*> mh
                         nPaint c =
-                            paintFlow ((\(Just b, p) -> (b, p)) <$> c) `mix`
+                            paintFlow (first getBack <$> c) `mix`
                             paintTrans ((\y -> (0, y)) <$> mh)
                                 (paintEmpty w eh) c
                     in (mw, mh, nPaint) }

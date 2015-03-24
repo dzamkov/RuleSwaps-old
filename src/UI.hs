@@ -1,6 +1,6 @@
 {-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE KindSignatures #-}
-module Terminal.UI (
+module UI (
     Input (..),
     Output (..),
     Style (main),
