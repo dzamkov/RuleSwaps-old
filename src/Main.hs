@@ -5,7 +5,7 @@ module Main where
 
 import Deck
 import Reactive
-import qualified Reactive.IO
+import Reactive.IO
 import Markup hiding (Flow, Block, Widget)
 import Markup.Builder
 import Markup.Attr
@@ -26,7 +26,7 @@ testFlow :: (Reactive e f) => Widget e f Flow (e ())
 testFlow = runBuilder $ do
     let pre = text (color $ Color ANSI.Vivid ANSI.Green) $
             take 450 $ cycle "a ab abc "
-    (agree, agreeE) <- use $ button (key 'A' . title "Agree")
+    (agree, agreeE) <- use $ button (key 'a' . title "Agree")
     return (pre <> agree, agreeE)
 
 testBlock :: (Reactive e f) => Widget e f Block (e ())
@@ -41,7 +41,11 @@ testBlock = runBuilder $ do
             solid blue)
     return (res, flowE)
 
-main = runWidget testBlock
+main = do
+    (running, changeRunning) <- newBehavior True
+    quit <- runWidget running testBlock
+    await quit
+    changeRunning $ const False
 
 reset :: IO ()
 reset = do

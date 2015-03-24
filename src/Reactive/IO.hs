@@ -17,7 +17,8 @@ module Reactive.IO (
     accumB,
     changes,
     memoB,
-    newBehavior
+    newBehavior,
+    registerBehaviorEternal
 ) where
 
 import Prelude hiding (map)
@@ -290,3 +291,11 @@ newBehavior :: a -> IO (Behavior a, (a -> a) -> IO ())
 newBehavior initial = do
     (event, change) <- newEvent
     return (Reactive.accumB initial event, change)
+
+-- | Registers a procedure to be called every time the given behavior
+-- changes (as determined by '=='), and initially, right after registration.
+registerBehaviorEternal :: (Eq a) => Behavior a -> (a -> IO ()) -> IO ()
+registerBehaviorEternal source handle = do
+    let handleOnDiff (x, y) | x == y = return ()
+        handleOnDiff (_, y) = handle y
+    registerSafeEternal (changes source) handleOnDiff $ value source >>= handle

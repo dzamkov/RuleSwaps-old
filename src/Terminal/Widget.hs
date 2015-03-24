@@ -15,6 +15,7 @@ import qualified Reactive.IO as IO
 import qualified Markup
 import Markup.Attr hiding (key)
 import Terminal.Base
+import Terminal.Input
 import Terminal.Flow (Flow, TextStyle)
 import Terminal.Block (Block)
 import Terminal.Paint (runPaint)
@@ -22,6 +23,7 @@ import qualified Terminal.Block as Block
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Monoid
+import Control.Concurrent
 import Control.Monad.State
 import Control.Arrow (first, second)
 import Control.Applicative
@@ -179,15 +181,31 @@ instance MonadWidget IO.Event IO.Behavior Global where
                 return $ Just (event, release)
     defer = undefined -- TODO
 
--- | Runs a widget in the current terminal.
-runWidget :: Widget IO.Event IO.Behavior Block a -> IO a
-runWidget (Widget (Global setup)) = do
-    (key, _) <- IO.newEvent
+-- | Begins running a widget in the current terminal. The given boolean
+-- behavior is used to determine when the widget is active (and the terminal
+-- in use). When this changes to true, the widget starts/resumes and when
+-- it changes to false, the widget stops/pauses. This behavior must initially
+-- be false.
+runWidget :: IO.Behavior Bool -> Widget IO.Event IO.Behavior Block a -> IO a
+runWidget active (Widget (Global setup)) = do
+
+    -- Handle key input
+    (key, fireKey) <- IO.newEvent
+    keyLock <- newEmptyMVar
+    forkIO $ forever $ do
+        readMVar keyLock
+        char <- getHiddenChar
+        fireKey char
+    IO.registerBehaviorEternal active $ \active -> do
+        when active $ void $ tryPutMVar keyLock ()
+        unless active $ void $ tryTakeMVar keyLock
+
+    -- Handle display
     let state = GlobalState {
             key = key,
             assignedKeys = Set.empty }
     (fig, value) <- evalStateT setup state
-    runPaint $ \size ->
+    runPaint active $ \size ->
         let width = fst <$> size
             height = snd <$> size
             (_, _, paint) = Block.place fig width height

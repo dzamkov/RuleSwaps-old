@@ -50,7 +50,7 @@ fromPaint (Over x y) = (<>) <$> fromPaint y <*> fromPaint x
 -- partial updates. Accumulating the partial update event should yield the
 -- draw behavior.
 signals :: (ReactiveDiscrete e f) => Paint f -> (f Draw, e Draw)
-signals (ToPaint source) = (source, changes source)
+signals (ToPaint source) = (source, snd <$> changes source)
 signals (Mix x y) = (rB, rC) where
     (xB, xC) = signals x
     (yB, yC) = signals y
@@ -62,10 +62,13 @@ signals (Over hi lo) = (rB, rC) where
     rB = (<>) <$> loB <*> hiB
     rC = hiC `union` (flip (<>) <$> hiB <@> loC)
 
--- | Displays a paint on the current terminal, keeping it updated as needed.
--- The size of the terminal may be used to generate the paint.
-runPaint :: (IO.Behavior (Width, Height) -> Paint IO.Behavior) -> IO ()
-runPaint source = do
+-- | Begins displaying a paint on the current terminal, keeping it updated as
+-- needed. The size of the terminal may be used to generate the paint. The
+-- given boolean behavior is used to determine when the paint is active (and
+-- the terminal is in use).
+runPaint :: IO.Behavior Bool
+    -> (IO.Behavior (Width, Height) -> Paint IO.Behavior) -> IO ()
+runPaint _ source = do -- TODO: use 'active' boolean behavior
     let getSize = do
         Just win <- Size.size
         return (Width $ Size.width win, Height $ Size.height win)
