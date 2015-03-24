@@ -6,8 +6,12 @@ module Reactive where
 import Data.Monoid
 import Control.Applicative
 
--- | @e@ is a type constructor for an event in a reactive system. Events can
--- be mapped and combined.
+-- | @e@ is a type constructor for an event in a reactive system. An event
+-- can be thought of as a stream of (a countable number) of occurences.
+-- There is a systemwide partial ordering of event occurences, which we use
+-- to define /before/ and /after/. The 'Functor' instance of @e@ maps the
+-- values of occurences of an event while preserving the order of occurences
+-- with respect to all others.
 class Functor e => Event e where
 
     -- | An event that never occurs.
@@ -15,19 +19,24 @@ class Functor e => Event e where
     default never :: Monoid (e a) => e a
     never = mempty
 
-    -- | An event that occurs when either of the given events occur.
+    -- | An event that occurs when either of the given events occur,
+    -- preserving the ordering of occurences.
     union :: e a -> e a -> e a
     default union :: Monoid (e a) => e a -> e a -> e a
     union = mappend
 
-    -- | Filters the occurences of an event.
+    -- | Filters the occurences of an event, preserving the order of
+    -- occurences.
     filterJust :: e (Maybe a) -> e a
 
+    -- | Constructs two events that both occur when the given event occurs,
+    -- preserving the ordering of occurences with respect to all
+    -- existing events. Additionally, all occurences of the second event
+    -- will occur after the corresponding occurence of the first event.
+    subdivide :: e a -> (e a, e a)
+
 -- | A reactive system consisting of events of type @e@ and behaviors of type
--- @f@. All events created using event function may lag behind the original
--- events by an unspecified amount. This prevents issues associated with
--- simultaneous event occurence at the cost of undefined semantics for some
--- programs.
+-- @f@.
 class (Event e, Applicative f) => Reactive e f where
 
     -- | Tags an event with the value of a behavior at the time it occurs.
@@ -56,8 +65,10 @@ stepper init = accumB init . (const <$>)
 class ReactiveState e f => ReactiveDiscrete e f | f -> e where
 
     -- | Constructs an event which occurs when the given behavior changes
-    -- some time after the change.
-    changes :: f a -> e a
+    -- (and sometimes when it doesn't). Each occurence is guranteed to
+    -- occur after the corresponding change, but before the next change.
+    -- Occurences are tagged with the old and new values for the behavior.
+    changes :: f a -> e (a, a)
 
 -- | A reactive system where signals of type @g@ can be dynamically switched
 -- using behaviors.
