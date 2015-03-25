@@ -73,29 +73,33 @@ instance (Reactive e f, Monoid a) => Monoid (Widget e f Flow a) where
     mempty = toWidget mempty mempty
     mappend = compose mappend
 instance (Reactive e f, Monoid a)
-    => Markup.Flow Width (Widget e f Flow a) where
-        weakSpace = toWidget mempty . Markup.weakSpace
-        strongSpace = toWidget mempty . Markup.strongSpace
+    => Markup.Flow (Widget e f Flow a) where
         tight = decorate Markup.tight
 instance (Reactive e f, Monoid a)
-    => Markup.FlowText Width TextStyle (Widget e f Flow a) where
+    => Markup.FlowSpace Width (Widget e f Flow a) where
+        weakSpace = toWidget mempty . Markup.weakSpace
+        strongSpace = toWidget mempty . Markup.strongSpace
+instance (Reactive e f, Monoid a)
+    => Markup.FlowText TextStyle (Widget e f Flow a) where
         tightText style str = toWidget mempty $ Markup.tightText style str
         naturalSpace style = toWidget mempty $ Markup.naturalSpace style
 instance (Reactive e f, Monoid a)
-    => Markup.Block Width Height (Widget e f Block a) where
+    => Markup.Block (Widget e f Block a) where
         (|||) = compose (Markup.|||)
         (===) = compose (Markup.===)
+instance (Reactive e f, Monoid a)
+    => Markup.BlockSize Width Height (Widget e f Block a) where
         setWidth width = decorate (Markup.setWidth width)
         setHeight height = decorate (Markup.setHeight height)
 instance (Reactive e f, Monoid a)
-    => Markup.BlockSolid Width Height Color (Widget e f Block a) where
+    => Markup.BlockSolid Color (Widget e f Block a) where
         solid = toWidget mempty . Markup.solid
 instance (Reactive e f, Monoid a)
-    => Markup.BlockTrans Width Height (Widget e f Block a) where
+    => Markup.BlockTrans (Widget e f Block a) where
         clear = toWidget mempty Markup.clear
         over = compose Markup.over
-instance (Reactive e f, Monoid a) => Markup.FlowToBlock
-    Width Height (Widget e f Flow a) (Widget e f Block a) where
+instance (Reactive e f, Monoid a)
+    => Markup.FlowToBlock (Widget e f Flow a) (Widget e f Block a) where
         blockify alignment = decorate (Markup.blockify alignment)
 
 -- | Constructs a non-interactive widget with the given value and figure.

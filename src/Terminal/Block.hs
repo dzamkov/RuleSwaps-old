@@ -53,7 +53,7 @@ data Block f = Block {
         -> (f Width, f Height,
             f (Maybe Color, Point) -> Paint f) }
 
-instance (Applicative f) => Markup.Block Width Height (Block f) where
+instance (Applicative f) => Markup.Block (Block f) where
     (|||) left right =
         let rFreeWidth = freeWidth left + freeWidth right
         in Block {
@@ -92,6 +92,7 @@ instance (Applicative f) => Markup.Block Width Height (Block f) where
                     bh = (+) <$> beh <*> bmh
                 in (mw, mh, \c -> tPaint c `mix`
                     paintTrans ((\y -> (0, y)) <$> th) bPaint c) }
+instance (Applicative f) => Markup.BlockSize Width Height (Block f) where
     setWidth _ block | freeWidth block == 0 = block
     setWidth width block = block {
         freeWidth = 0,
@@ -106,14 +107,13 @@ instance (Applicative f) => Markup.Block Width Height (Block f) where
             let (mw, mh', paint) = place block w h
                 mh = max height <$> mh'
             in (mw, mh, paint) }
-instance (Applicative f) => Markup.BlockSolid
-    Width Height Color (Block f) where
-        solid color = Block {
-            freeWidth = 1,
-            freeHeight = 1,
-            opacity = Opaque (Just color),
-            place = \w h -> (pure 0, pure 0, paintSolid (pure color) w h) }
-instance (Applicative f) => Markup.BlockTrans Width Height (Block f) where
+instance (Applicative f) => Markup.BlockSolid Color (Block f) where
+    solid color = Block {
+        freeWidth = 1,
+        freeHeight = 1,
+        opacity = Opaque (Just color),
+        place = \w h -> (pure 0, pure 0, paintSolid (pure color) w h) }
+instance (Applicative f) => Markup.BlockTrans (Block f) where
     clear = Block {
         freeWidth = 1,
         freeHeight = 1,
@@ -144,25 +144,24 @@ instance (Applicative f) => Markup.BlockTrans Width Height (Block f) where
                         mw = max <$> hmw <*> lmw
                         mh = max <$> hmh <*> lmh
                     in (mw, mh, \c -> hPaint c `over` lPaint c) }
-instance (Applicative f) => Markup.FlowToBlock
-    Width Height (Flow f) (Block f) where
-        blockify alignment' flow =
-            let alignment = Flow.fromAlignment alignment'
-            in Block {
-                freeWidth = 1,
-                freeHeight = 1,
-                opacity = Dependent,
-                place = \w h ->
-                    let getBack = fromMaybe $
-                            error "back color must be provided"
-                        (mh, paintFlow) = Flow.place flow alignment w
-                        mw = Flow.minWidth flow
-                        eh = (-) <$> h <*> mh
-                        nPaint c =
-                            paintFlow (first getBack <$> c) `mix`
-                            paintTrans ((\y -> (0, y)) <$> mh)
-                                (paintEmpty w eh) c
-                    in (mw, mh, nPaint) }
+instance (Applicative f) => Markup.FlowToBlock (Flow f) (Block f) where
+    blockify alignment' flow =
+        let alignment = Flow.fromAlignment alignment'
+        in Block {
+            freeWidth = 1,
+            freeHeight = 1,
+            opacity = Dependent,
+            place = \w h ->
+                let getBack = fromMaybe $
+                        error "back color must be provided"
+                    (mh, paintFlow) = Flow.place flow alignment w
+                    mw = Flow.minWidth flow
+                    eh = (-) <$> h <*> mh
+                    nPaint c =
+                        paintFlow (first getBack <$> c) `mix`
+                        paintTrans ((\y -> (0, y)) <$> mh)
+                            (paintEmpty w eh) c
+                in (mw, mh, nPaint) }
 
 -- | Multiples an integer by a rational.
 imult :: (Integral a) => Rational -> a -> a

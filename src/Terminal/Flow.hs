@@ -47,13 +47,14 @@ instance Monoid (Flow f) where
     mappend (Flow px (xi : xis)) y = Flow px (go xi xis y) where
         go (d, w, s) [] (Flow py yi) = (d, w, s + py) : yi
         go xi (nXi : xis) y = xi : go nXi xis y
-instance Applicative f => Markup.Flow Width (Flow f) where
+instance Applicative f => Markup.Flow (Flow f) where
+    tight = error "'tight' not implemented" -- TODO
+instance Applicative f => Markup.FlowSpace Width (Flow f) where
     weakSpace width = Flow width []
     strongSpace width = res where
         paint (back, offset) = Draw.space back offset width
         res = Flow 0 [(toPaint . (paint <$>), pure width, 0)]
-    tight = error "'tight' not implemented" -- TODO
-instance Applicative f => Markup.FlowText Width TextStyle (Flow f) where
+instance Applicative f => Markup.FlowText TextStyle (Flow f) where
     tightText style str = res where
         fore = textColor (style defaultStyle)
         width = Width $ length str

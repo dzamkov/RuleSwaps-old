@@ -8,7 +8,17 @@ import Data.Monoid
 -- potential breakpoints. When applied to an area, the flow can be broken into
 -- horizontal pieces in order to fit. The monoid instance of @a@ can be used
 -- to concatenate flows with implicit breakpoints between them.
-class (Monoid w, Monoid a) => Flow w a | a -> w where
+class Monoid a => Flow a where
+
+    -- | Removes the potential breakpoints from a flow, ensuring that it will
+    -- appear as an unbroken horizontal unit.
+    tight :: a -> a
+
+-- | @a@ is a flow-like figure to which horizontal space of a set absolute
+-- width can be added. All spaces are by default "breaking" because
+-- concatenation of flows created implicit breakpoints. 'tight' may be used
+-- to create non-breaking spaces.
+class (Monoid w, Flow a) => FlowSpace w a | a -> w where
 
     -- | Constructs a weak space of the given width, so called because it
     -- vanishes when it occurs adjacent to a break, regardless of how wide it
@@ -19,17 +29,13 @@ class (Monoid w, Monoid a) => Flow w a | a -> w where
     -- will appear with its full width regardless of where it occurs.
     strongSpace :: w -> a
 
-    -- | Removes the potential breakpoints from a flow, ensuring that it will
-    -- appear as an unbroken horizontal unit.
-    tight :: a -> a
-
 -- | Alias for 'weakSpace'.
-space :: (Flow w a) => w -> a
+space :: (FlowSpace w a) => w -> a
 space = weakSpace
 
 -- | @a@ is a flow-like figure with a means of displaying text. The text
 -- can be styled using a description of type @p@.
-class Flow w a => FlowText w p a | a -> p where
+class Flow a => FlowText p a | a -> p where
 
     -- | Constructs a figure displaying the given text with no internal
     -- breakpoints.
@@ -41,7 +47,7 @@ class Flow w a => FlowText w p a | a -> p where
 
 -- | Constructs a figure displaying the given text with natural breakpoints
 -- between each word.
-text :: (FlowText w p a) => (p -> p) -> String -> a
+text :: (FlowText p a) => (p -> p) -> String -> a
 text style = breakSpace where
     breakWord a [] = tightText style (reverse a)
     breakWord a (' ' : xs) = tightText style (reverse a) <> breakSpace xs
@@ -52,15 +58,20 @@ text style = breakSpace where
 
 -- | @a@ is a block-like figure, appearing as a rectangle whose size may take a
 -- range of values.
-class Block w h a | a -> w h where
+class Block a where
 
     -- | Places one block beside another, causing the heights to coincide.
     -- The method of distributing widths is undefined.
+    infixl 3 |||
     (|||) :: a -> a -> a
 
     -- | Stacks one block on top of another, causing the widths to coincide.
     -- The method of distributing heights is undefined.
+    infixl 2 ===
     (===) :: a -> a -> a
+
+-- | @a@ is a block-like figure which may be given an absolute size.
+class Block a => BlockSize w h a | a -> w h where
 
     -- | Resolves the width of a block to be as close to the given value as
     -- possible without hiding any content.
@@ -72,13 +83,13 @@ class Block w h a | a -> w h where
 
 -- | @a@ is a block-like figure that allows the construction of solid-color
 -- blocks.
-class Block w h a => BlockSolid w h c a | a -> c where
+class Block a => BlockSolid c a | a -> c where
 
     -- | Constructs a solid-color block of the given color.
     solid :: c -> a
 
 -- | @a@ is a block-like figure that may be partially transparent.
-class Block w h a => BlockTrans w h a where
+class Block a => BlockTrans a where
 
     -- | A completely transparent block with ambiguity in width and height.
     clear :: a
@@ -88,9 +99,20 @@ class Block w h a => BlockTrans w h a where
     -- completely opaque and can fit entirely over the second.
     over :: a -> a -> a
 
+    -- | Surronds a block with a transparent border of variable size, allowing
+    -- the inner and outer sizes to be set independently.
+    inset :: a -> a
+    inset inner = clear === clear ||| inner ||| clear === clear
+
 -- | Sets the color of the transparent portions of a block.
-setBack :: (BlockSolid w h c a, BlockTrans w h a) => c -> a -> a
+setBack :: (BlockSolid c a, BlockTrans a) => c -> a -> a
 setBack color hi = over hi $ solid color
+
+-- | @a@ is a block-like figure to which a border can be applied.
+class Block a => BlockBorder p a where
+
+    -- | Applies a border to a block.
+    withBorder :: (p -> p) -> a -> a
 
 -- | Identifies a possible alignment for the lines within a flow.
 data Alignment
@@ -101,7 +123,7 @@ data Alignment
 
 -- | @a@ is a 'Flow' figure that can be converted into a 'Block' figure of
 -- type @b@.
-class (Flow w a, Block w h b) => FlowToBlock w h a b | a -> b, b -> a where
+class (Flow a, Block b) => FlowToBlock a b | a -> b, b -> a where
 
     -- | Converts a flow into a translucent block using the given alignment.
     blockify :: Alignment -> a -> b

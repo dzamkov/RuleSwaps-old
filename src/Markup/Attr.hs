@@ -25,6 +25,14 @@ class AttrTitle p where
     -- | Applies the given title to a styling description.
     title :: String -> p -> p
 
+-- | @p@ is a styling description that allows a surronding margin to be
+-- specified.
+class AttrMargin w h p where
+
+    -- | Applies the given margin (specified by left, top, right, bottom
+    -- components, in that order) to a styling description.
+    margin :: w -> h -> w -> h -> p -> p
+
 -- | @p@ is a styling description for an element which can be associated
 -- a shortcut key.
 class AttrKey p where
