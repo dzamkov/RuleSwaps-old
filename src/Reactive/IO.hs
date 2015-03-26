@@ -62,11 +62,11 @@ union x y = Event $ \h -> register x h >> register y h
 mapE :: (a -> b) -> Event a -> Event b
 mapE f x = Event $ register x . (. f)
 
--- | Filters the occurences of an event.
+-- | Filters the occurences of an event without memoization.
 filterJust :: Event (Maybe a) -> Event a
-filterJust x = Event $ \h -> register x $ \value -> case value of
-    Just value -> h value
-    Nothing -> return ()
+filterJust x = Event $ \h ->
+    let go = maybe (register x go) h
+    in register x go
 
 -- | Caches the values for an event when they are generated for the first time.
 memoE :: Event a -> Event a
