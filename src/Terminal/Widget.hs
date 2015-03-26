@@ -17,7 +17,7 @@ import Markup.Attr hiding (key)
 import Terminal.Base
 import Terminal.Input
 import Terminal.Flow (Flow, TextStyle)
-import Terminal.Block (Block)
+import Terminal.Block (Block, BorderStyle)
 import Terminal.Paint (runPaint)
 import qualified Terminal.Block as Block
 import Data.Set (Set)
@@ -98,6 +98,9 @@ instance (Reactive e f, Monoid a)
     => Markup.BlockTrans (Widget e f Block a) where
         clear = toWidget mempty Markup.clear
         over = compose Markup.over
+instance (Reactive e f, Monoid a)
+    => Markup.BlockBorder BorderStyle (Widget e f Block a) where
+        withBorder style = decorate (Markup.withBorder style)
 instance (Reactive e f, Monoid a)
     => Markup.FlowToBlock (Widget e f Flow a) (Widget e f Block a) where
         blockify alignment = decorate (Markup.blockify alignment)

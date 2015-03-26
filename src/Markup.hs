@@ -99,17 +99,27 @@ class Block a => BlockTrans a where
     -- completely opaque and can fit entirely over the second.
     over :: a -> a -> a
 
-    -- | Surronds a block with a transparent border of variable size, allowing
-    -- the inner and outer sizes to be set independently.
-    inset :: a -> a
-    inset inner = clear === clear ||| inner ||| clear === clear
+-- | Surronds a block with a transparent border of variable size, allowing
+-- the inner and outer sizes to be vary independently.
+inset :: (BlockTrans a) => a -> a
+inset inner = clear === clear ||| inner ||| clear === clear
+
+-- | Applies padding to a block, given the size of the padding in the left,
+-- top, right and bottom directions.
+pad :: (BlockSize w h a, BlockTrans a) => w -> h -> w -> h -> a -> a
+pad l' t' r' b' inner = res where
+    l = setWidth l' clear
+    t = setHeight t' clear
+    r = setWidth r' clear
+    b = setHeight b' clear
+    res = t === l ||| inner ||| r === b
 
 -- | Sets the color of the transparent portions of a block.
 setBack :: (BlockSolid c a, BlockTrans a) => c -> a -> a
 setBack color hi = over hi $ solid color
 
 -- | @a@ is a block-like figure to which a border can be applied.
-class Block a => BlockBorder p a where
+class Block a => BlockBorder p a | a -> p where
 
     -- | Applies a border to a block.
     withBorder :: (p -> p) -> a -> a

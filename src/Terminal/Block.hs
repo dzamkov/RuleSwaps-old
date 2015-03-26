@@ -2,10 +2,13 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Terminal.Block (
     Opacity (..),
-    Block (..)
+    Block (..),
+    BorderStyle
 ) where
 
+import Markup ((===), (|||))
 import qualified Markup
+import qualified Markup.Attr as Attr
 import qualified Terminal.Draw as Draw
 import Terminal.Base
 import Terminal.Paint
@@ -144,6 +147,16 @@ instance (Applicative f) => Markup.BlockTrans (Block f) where
                         mw = max <$> hmw <*> lmw
                         mh = max <$> hmh <*> lmh
                     in (mw, mh, \c -> hPaint c `over` lPaint c) }
+instance (Applicative f) => Markup.BlockBorder BorderStyle (Block f) where
+    withBorder style' block =
+        let style = style' Attr.defaultStyle
+            (l', t', r', b') = borderMargin style
+            base = Markup.solid $ borderColor style
+            l = Markup.setWidth l' base
+            t = Markup.setHeight t' base
+            r = Markup.setWidth r' base
+            b = Markup.setHeight b' base
+        in t === l ||| block ||| r === b
 instance (Applicative f) => Markup.FlowToBlock (Flow f) (Block f) where
     blockify alignment' flow =
         let alignment = Flow.fromAlignment alignment'
@@ -204,3 +217,21 @@ paintTrans :: (Applicative f) => f Offset
 paintTrans offset source context = source $
     (\(ox, oy) (back, (x, y)) -> (back, (x + ox, y + oy)))
     <$> offset <*> context
+
+-- | Describes the style of block border.
+data BorderStyle = BorderStyle {
+
+    -- | The margin for the border.
+    borderMargin :: (Width, Height, Width, Height),
+
+    -- | The color of the border.
+    borderColor :: Color }
+
+instance Attr.AttrColor Color BorderStyle where
+    color c style = style { borderColor = c }
+instance Attr.AttrMargin Width Height BorderStyle where
+    margin l t r b style = style { borderMargin = (l, t, r, b) }
+instance Attr.HasDefault BorderStyle where
+    defaultStyle = BorderStyle {
+        borderMargin = (1, 1, 1, 1),
+        borderColor = snd defaultAppearance }
