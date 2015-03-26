@@ -72,11 +72,11 @@ class Style a where
             bcenter = blockify Center
             contents =
                 bcenter header ===
-                setHeight 2 clear ===
+                setHeight 1 clear ===
                 bcenter join ===
                 bcenter host ===
                 bcenter quit
-            menu = page contents
+            menu = compact $ setWidth 20 $ page contents
         return (setBack screenBack $ inset menu, outE)
 
     -- | The main interface for the program.

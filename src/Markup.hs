@@ -70,6 +70,10 @@ class Block a where
     infixl 2 ===
     (===) :: a -> a -> a
 
+    -- | Removes as much space from as a block as possible without hiding
+    -- any content.
+    compact :: a -> a
+
 -- | @a@ is a block-like figure which may be given an absolute size.
 class Block a => BlockSize w h a | a -> w h where
 

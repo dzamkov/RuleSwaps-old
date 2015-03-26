@@ -87,6 +87,7 @@ instance (Reactive e f, Monoid a)
     => Markup.Block (Widget e f Block a) where
         (|||) = compose (Markup.|||)
         (===) = compose (Markup.===)
+        compact = decorate Markup.compact
 instance (Reactive e f, Monoid a)
     => Markup.BlockSize Width Height (Widget e f Block a) where
         setWidth width = decorate (Markup.setWidth width)

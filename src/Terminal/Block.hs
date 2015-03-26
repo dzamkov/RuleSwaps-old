@@ -95,6 +95,9 @@ instance (Applicative f) => Markup.Block (Block f) where
                     bh = (+) <$> beh <*> bmh
                 in (mw, mh, \c -> tPaint c `mix`
                     paintTrans ((\y -> (0, y)) <$> th) bPaint c) }
+    compact block = block {
+        freeWidth = 0,
+        freeHeight = 0 }
 instance (Applicative f) => Markup.BlockSize Width Height (Block f) where
     setWidth _ block | freeWidth block == 0 = block
     setWidth width block = block {
