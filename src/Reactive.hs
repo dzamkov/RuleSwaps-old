@@ -29,6 +29,11 @@ class Functor e => Event e where
     -- occurences.
     filterJust :: e (Maybe a) -> e a
 
+-- | @e@ is a type constructor for an event that implements 'subdivide'. This
+-- requires that there be a dense ordering of times at which events can occur
+-- (which is not the case if there are discrete time steps).
+class Event e => EventSubdivide e where
+
     -- | Constructs two events that both occur when the given event occurs,
     -- preserving the ordering of occurences with respect to all
     -- existing events. Additionally, all occurences of the second event
@@ -49,20 +54,29 @@ infixl 4 <@
 (<@) x y = const <$> x <@> y
 
 -- | A reactive system where behaviors (@f@) can depend on events.
--- This allows the system to hold time-varying state.
-class Reactive e f => ReactiveState e f | e -> f where
+-- This allows the system to hold time-varying state. The @m@ monad carries
+-- a time-dependent value.
+class (Monad m, Reactive e f) => ReactiveState m e f | e -> m f where
 
     -- | Constructs a behavior with the given initial value that changes in
-    -- response to an event.
-    accumB :: a -> e (a -> a) -> f a
+    -- response to an event, starting at a particular moment.
+    accumB :: a -> e (a -> a) -> m (f a)
+
+    -- | Obtains the value of a behavior at a particular moment.
+    sample :: f a -> m a
+
+    -- | Instantiates time-dependent values with the time they occur, producing
+    -- an analogous stream of results.
+    execute :: e (m a) -> e a
 
 -- | Constructs a behavior with the given initial value that changes in
 -- response to an event.
-stepper :: (ReactiveState e f) => a -> e a -> f a
+stepper :: (ReactiveState m e f) => a -> e a -> m (f a)
 stepper init = accumB init . (const <$>)
 
--- | A reactive system where behaviors (@f@) change only at discrete moments.
-class ReactiveState e f => ReactiveDiscrete e f | f -> e where
+-- | A reactive system where all behaviors (@f@) change at discrete moments
+-- (thus having a countable number of changes).
+class Reactive e f => ReactiveDiscrete e f | f -> e where
 
     -- | Constructs an event which occurs when the given behavior changes
     -- (and sometimes when it doesn't). Each occurence is guranteed to

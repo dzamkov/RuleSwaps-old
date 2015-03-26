@@ -74,7 +74,7 @@ runPaint _ source = do -- TODO: use 'active' boolean behavior
         return (Width $ Size.width win, Height $ Size.height win)
     curSize <- getSize
     (sizeChanged, changeSize) <- IO.newEvent
-    let size = stepper curSize sizeChanged
+    size <- stepper curSize sizeChanged
     let paint = source size
     let (paintB, paintC) = signals paint
 

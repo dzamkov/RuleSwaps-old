@@ -35,9 +35,6 @@ import Control.Applicative
 -- | Identifies an event in an IO-based reactive system.
 data Event a = Event {
 
-    -- | Indicates whether this event has occured yet.
-    activeE :: IO Bool,
-
     -- | Registers an event handler to be invoked the next time this event
     -- occurs. It is safe to call this while the event is being processed,
     -- in which case, the handler will be invoked on the next occurence.
@@ -51,53 +48,48 @@ instance Functor Event where
     fmap f = memoE . mapE f
 instance Reactive.Event Event where
     filterJust = filterJust
-    subdivide = error "subdivide not implemented" -- TODO
+-- TODO: EventSubdivide implementation
 
 -- | An event that never occurs.
 never :: Event a
-never = Event {
-    activeE = return False,
-    register = const $ return () }
+never = Event $ const $ return ()
 
 -- | Combines events without memoization.
 union :: Event a -> Event a -> Event a
-union x y = Event {
-    activeE = (||) <$> activeE x <*> activeE y,
-    register = \h -> register x h >> register y h }
+union x y = Event $ \h -> register x h >> register y h
 
 -- | Maps an event without memoization.
 mapE :: (a -> b) -> Event a -> Event b
-mapE f x = Event {
-    activeE = activeE x,
-    register = register x . (. f) }
+mapE f x = Event $ register x . (. f)
 
 -- | Filters the occurences of an event.
 filterJust :: Event (Maybe a) -> Event a
-filterJust x = Event {
-    activeE = activeE x,
-    register = \h -> register x $ \value -> case value of
-        Just value -> h value
-        Nothing -> return () }
+filterJust x = Event $ \h -> register x $ \value -> case value of
+    Just value -> h value
+    Nothing -> return ()
 
 -- | Caches the values for an event when they are generated for the first time.
 memoE :: Event a -> Event a
 memoE source = source -- TODO
+
+-- | Begins executing the procedures given by an event.
+executeIO :: Event (IO a) -> IO (Event a)
+executeIO source = do
+    (res, fire) <- newEvent
+    register source $ \proc -> proc >>= fire
+    return res
 
 -- | Constructs a new event that can be manually fired by invoking the returned
 -- procedure, which is not thread-safe and should have at most one instance
 -- running at a time.
 newEvent :: IO (Event a, a -> IO ())
 newEvent = do
-    ref <- newIORef ([], False)
-    let active = snd <$> readIORef ref
-        register h = atomicModifyIORef ref $
-            \(l, a) -> ((h : l, a), ()) -- TODO: queue
+    ref <- newIORef []
+    let register h = atomicModifyIORef ref $ \l -> (h : l, ())
         fire val = do
-            handlers <- atomicModifyIORef ref $ \(l, _) -> (([], True), l)
+            handlers <- atomicModifyIORef ref $ \l -> ([], l)
             forM_ (reverse handlers) (\h -> h val)
-    return (Event {
-        activeE = active,
-        register = register }, fire)
+    return (Event register, fire)
 
 -- | Registers an event handler to be invoked /every/ time there is an
 -- occurence of the given event, starting after this procedure returns.
@@ -139,9 +131,6 @@ await event = do
 -- | Identifies a behavior in an IO-based reactive system.
 data Behavior a = Behavior {
 
-    -- | Indicates whether this behavior has changed yet.
-    activeB :: IO Bool,
-
     -- | Gets the current value for this behavior.
     value :: IO a,
 
@@ -157,14 +146,15 @@ instance Functor Behavior where
     fmap f x = memoB $ mapB f x
 instance Applicative Behavior where
     pure x = Behavior {
-        activeB = return False,
         value = return x,
         registerInvalidate = const $ return () }
     (<*>) f x = memoB $ lift2 id f x
 instance Reactive Event Behavior where
     (<@>) f x = memoE $ tag id f x
-instance ReactiveState Event Behavior where
+instance ReactiveState IO Event Behavior where
     accumB = accumB
+    sample = value
+    execute = unsafePerformIO . executeIO
 instance ReactiveDiscrete Event Behavior where
     changes = memoE . changes
 
@@ -175,7 +165,6 @@ mapB f source = source { value = f <$> value source }
 -- | Lifts a function to behaviors without memoization.
 lift2 :: (a -> b -> c) -> Behavior a -> Behavior b -> Behavior c
 lift2 f x y = Behavior {
-    activeB = (||) <$> activeB x <*> activeB y,
     value = f <$> value x <*> value y,
     registerInvalidate = \h ->
         registerInvalidate x h >> registerInvalidate y h }
@@ -183,11 +172,9 @@ lift2 f x y = Behavior {
 -- | Tags an event with the value of a behavior at the time it occurs,
 -- without memoization.
 tag :: (a -> b -> c) -> Behavior a -> Event b -> Event c
-tag f x y = Event {
-    activeE = activeE y,
-    register = \h -> register y $ \val -> do
-        cur <- value x
-        h (f cur val) }
+tag f x y = Event $ \h -> register y $ \val -> do
+    cur <- value x
+    h (f cur val)
 
 -- | A mutex used to insure that only one invalidation propogation is ongoing
 -- in a behavior network at any given time. This is needed for the
@@ -216,8 +203,8 @@ newHandlersList = do
 
 -- | Constructs a behavior with the given initial value that changes in
 -- response to an event, without memoization.
-accumB :: a -> Event (a -> a) -> Behavior a
-accumB value event = unsafePerformIO $ do
+accumB :: a -> Event (a -> a) -> IO (Behavior a)
+accumB value event = do
     ref <- newIORef value
     weakRef <- mkWeakPtr ref Nothing
     (registerInvalidate', invalidate) <- newHandlersList
@@ -233,24 +220,19 @@ accumB value event = unsafePerformIO $ do
                 takeMVar globalBehaviorLock
             Nothing -> return ()
     register event handler
-    isActive <- activeE event
-    when isActive $ error "History not available"
     return Behavior {
-        activeB = activeE event,
         value = readIORef ref,
         registerInvalidate = registerInvalidate' }
 
 -- | Constructs an event which occurs when the given behavior changes,
 -- without memoization.
 changes :: Behavior a -> Event (a, a)
-changes source = Event {
-    activeE = activeB source,
-    register = \handler ->
-        registerInvalidate source $ do
-            old <- value source
-            return $ do
-                new <- value source
-                handler (old, new) }
+changes source = Event $ \handler ->
+    registerInvalidate source $ do
+        old <- value source
+        return $ do
+            new <- value source
+            handler (old, new)
 
 -- | Caches the values for a behavior when they are generated for the first
 -- time.
@@ -274,7 +256,6 @@ memoB source = unsafePerformIO $ do
             Nothing -> return $ return ()
     registerInvalidate source sourceInvalidate
     return Behavior {
-        activeB = activeB source,
         value = do
             val <- readIORef ref -- TODO: possible race condition
             case val of
@@ -290,7 +271,8 @@ memoB source = unsafePerformIO $ do
 newBehavior :: a -> IO (Behavior a, (a -> a) -> IO ())
 newBehavior initial = do
     (event, change) <- newEvent
-    return (Reactive.accumB initial event, change)
+    behavior <- Reactive.accumB initial event
+    return (behavior, change)
 
 -- | Registers a procedure to be called every time the given behavior
 -- changes (as determined by '=='), and initially, right after registration.
