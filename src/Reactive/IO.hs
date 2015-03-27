@@ -22,7 +22,7 @@ module Reactive.IO (
 ) where
 
 import Prelude hiding (map)
-import Reactive (Reactive, ReactiveState, ReactiveDiscrete)
+import Reactive (Reactive, ReactiveState, ReactiveDiscrete, ReactiveSwitch)
 import qualified Reactive
 import Data.IORef
 import System.IO.Unsafe
@@ -157,6 +157,10 @@ instance ReactiveState IO Event Behavior where
     execute = unsafePerformIO . executeIO
 instance ReactiveDiscrete Event Behavior where
     changes = memoE . changes
+instance ReactiveSwitch Event Behavior Event where
+    switch = switchE
+instance ReactiveSwitch Event Behavior Behavior where
+    switch = switchB
 
 -- | Maps a behavior without memoization.
 mapB :: (a -> b) -> Behavior a -> Behavior b
@@ -265,6 +269,14 @@ memoB source = unsafePerformIO $ do
                     writeIORef ref $ Just val
                     return val,
         registerInvalidate = registerInvalidate' }
+
+-- | Dynamically switches between events.
+switchE :: Behavior (Event a) -> Event a
+switchE = error "not implemented" -- TODO
+
+-- | Dynamically switches between behaviors.
+switchB :: Behavior (Behavior a) -> Behavior a
+switchB = error "not implemented" -- TODO
 
 -- | Constructs a new behavior that can be manually changed by invoking the
 -- returned procedure.
