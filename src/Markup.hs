@@ -149,6 +149,18 @@ class Functor w => Widget w where
     -- | Computes the fixed point of a widget.
     wfix :: (a -> w a) -> w a
 
+-- | @w@ is a widget type that allows dynamic switching.
+class (ReactiveState m e f, Widget w) => WidgetSwitch m e f w where
+
+    -- | Instantiates the time-dependent value in a widget with the time the
+    -- widget is instantiated.
+    defer :: w (m a) -> w a
+
+    -- | Constructs a widget that dynamically switches between widgets, given
+    -- the initial widget and an event that selects other widgets. The widget
+    -- begins listening to the event when it is instantiated.
+    frame :: w a -> e (w a) -> w (f a)
+
 -- | @w@ is a widget type that allows the construction of buttons.
 class (Event e, Widget w) => WidgetButton e p w | w -> e p where
 

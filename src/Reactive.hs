@@ -1,9 +1,11 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ConstraintKinds #-}
 module Reactive where
 
 import Data.Monoid
+import Control.Monad.Fix
 import Control.Applicative
 
 -- | @e@ is a type constructor for an event in a reactive system. An event
@@ -42,7 +44,7 @@ class Event e => EventSubdivide e where
 
 -- | A reactive system consisting of events of type @e@ and behaviors of type
 -- @f@.
-class (Event e, Applicative f) => Reactive e f where
+class (Event e, Applicative f) => Reactive e f | f -> e where
 
     -- | Tags an event with the value of a behavior at the time it occurs.
     infixl 4 <@>
@@ -53,10 +55,13 @@ infixl 4 <@
 (<@) :: (Reactive e f) => f a -> e b -> e a
 (<@) x y = const <$> x <@> y
 
+-- TODO: remove once AMP goes through
+type MonadFix' m = (Applicative m, MonadFix m)
+
 -- | A reactive system where behaviors (@f@) can depend on events.
 -- This allows the system to hold time-varying state. The @m@ monad carries
 -- a time-dependent value.
-class (Monad m, Reactive e f) => ReactiveState m e f | e -> m f where
+class (MonadFix' m, Reactive e f) => ReactiveState m e f | e -> m where
 
     -- | Constructs a behavior with the given initial value that changes in
     -- response to an event, starting at a particular moment.
@@ -76,7 +81,7 @@ stepper init = accumB init . (const <$>)
 
 -- | A reactive system where all behaviors (@f@) change at discrete moments
 -- (thus having a countable number of changes).
-class Reactive e f => ReactiveDiscrete e f | f -> e where
+class Reactive e f => ReactiveDiscrete e f where
 
     -- | Constructs an event which occurs when the given behavior changes
     -- (and sometimes when it doesn't). Each occurence is guranteed to
@@ -86,7 +91,7 @@ class Reactive e f => ReactiveDiscrete e f | f -> e where
 
 -- | A reactive system where signals of type @g@ can be dynamically switched
 -- using behaviors.
-class (Reactive e f, Functor g) => ReactiveSwitch e f g | f -> e where
+class (Reactive e f, Functor g) => ReactiveSwitch e f g where
 
     -- | Constructs a signal which defers to the signal specified by the given
     -- behavior.
